@@ -154,6 +154,30 @@ describe("a message", () => {
     });
   });
 
+  test("a delivered message is final: neither party can withdraw it and no edit exists (#111 story 108)", async () => {
+    const { domain, given } = await createHarness();
+    const { client, artisan, conversationId } = await talking(given, domain);
+    const sent = await domain.conversations.send(client.actor, {
+      conversationId,
+      text: "Delivered already.",
+    });
+    const messageId = (sent.ok && sent.value.messageId) || "";
+
+    for (const party of [client, artisan]) {
+      expect(await domain.conversations.withdrawHeld(party.actor, { messageId })).toMatchObject({
+        ok: false,
+        refusal: { reason: "nothing-held" },
+      });
+    }
+    expect(await domain.conversations.view(artisan.actor, { conversationId })).toMatchObject({
+      items: [{ kind: "event" }, { text: "Delivered already.", state: "delivered" }],
+    });
+    // The public surface names no edit, update, or delete for any message.
+    expect(Object.keys(domain.conversations)).toEqual(
+      expect.not.arrayContaining([expect.stringMatching(/edit|update|delete|remove/i)]),
+    );
+  });
+
   test("takes up to five photos, which only the parties see", async () => {
     const { domain, given } = await createHarness();
     const { client, artisan, conversationId } = await talking(given, domain);
