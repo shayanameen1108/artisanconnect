@@ -20,6 +20,7 @@ import { causedBy } from "../errors";
 import { fileLink } from "../file-links";
 import { defineQueueItemKind, type Block, type DecisionField, type ItemRow } from "../queues";
 import { ok, refuse, type Result } from "../shared/result";
+import { copy } from "../shared/copy";
 import { daysBefore, formatDay, isDay, saDay, saDayStart } from "../shared/sa-days";
 import { accounts, authUsers, queueItems, verificationChecks } from "../schema";
 import { defineSection } from "../section";
@@ -68,7 +69,7 @@ const verificationItem = defineQueueItemKind(KIND, {
   queue: "verification",
   decisions: {
     // Recorded once no check waits, never chosen.
-    checked: { label: "Every check decided", told: "Nobody", reason: "none" },
+    checked: { label: "Every check decided", told: copy.told.nobody, reason: "none" },
   },
   async allowed() {
     return [];

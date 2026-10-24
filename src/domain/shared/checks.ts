@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { isDay } from "./sa-days";
+import { copy } from "./copy";
 import { SERVICE_CATEGORIES, type ServiceCategory } from "./service-categories";
 
 // Shared with the web app's forms, so a check is refused the same way in both.
@@ -62,9 +63,11 @@ const document = (label: string): FilePart => ({
   photosOnly: false,
 });
 
+const t = copy.checks;
+
 export const CHECKS: Record<CheckKind, CheckDefinition> = {
   identity: {
-    name: "Identity document",
+    name: t.identity.name,
     group: "once",
     expiresOn: "optional",
     issuedOn: false,
@@ -72,99 +75,99 @@ export const CHECKS: Record<CheckKind, CheckDefinition> = {
     files: [
       {
         part: "document",
-        label: "The identity document (front, and back if it has one)",
+        label: t.identity.document,
         min: 1,
         max: 2,
         photosOnly: false,
       },
-      { part: "selfie", label: "A selfie holding it", min: 1, max: 1, photosOnly: true },
+      { part: "selfie", label: t.identity.selfie, min: 1, max: 1, photosOnly: true },
     ],
-    hint: "A South African ID, a refugee ID, or a passport, and a selfie of you holding it.",
+    hint: t.identity.hint,
   },
   "work-permit": {
-    name: "Work permit",
+    name: t.workPermit.name,
     group: "once",
     expiresOn: "optional",
     issuedOn: false,
     registrationNumber: false,
-    files: [document("The work permit")],
-    hint: "Needed with a foreign passport: a permit that lets you work for yourself, such as permanent residence or an exemption permit. Give its expiry date unless it never expires.",
+    files: [document(t.workPermit.document)],
+    hint: t.workPermit.hint,
   },
   "payout-account": {
-    name: "Payout account",
+    name: t.payoutAccount.name,
     group: "once",
     expiresOn: "none",
     issuedOn: false,
     registrationNumber: false,
-    files: [document("A bank confirmation letter")],
-    hint: "A letter from your bank confirming the account is in your own name. Payouts go here.",
+    files: [document(t.payoutAccount.document)],
+    hint: t.payoutAccount.hint,
   },
   "work-photos": {
-    name: "Work photos",
+    name: t.workPhotos.name,
     group: "category",
     expiresOn: "none",
     issuedOn: false,
     registrationNumber: false,
-    files: [{ part: "photos", label: "Three photos", min: 3, max: 3, photosOnly: true }],
-    hint: "Three photos of finished work you did yourself.",
+    files: [{ part: "photos", label: t.workPhotos.photos, min: 3, max: 3, photosOnly: true }],
+    hint: t.workPhotos.hint,
   },
   "trained-plumber": {
-    name: "Trained plumber",
+    name: t.trainedPlumber.name,
     group: "category",
     category: "plumbing",
     expiresOn: "none",
     issuedOn: false,
     registrationNumber: false,
-    files: [document("The trade test or certificate")],
-    hint: "A trade test, a certificate of proficiency, or NQF 3 Construction Plumbing.",
+    files: [document(t.trainedPlumber.document)],
+    hint: t.trainedPlumber.hint,
   },
   "gas-practitioner": {
-    name: "Gas practitioner registration",
+    name: t.gasPractitioner.name,
     group: "category",
     category: "plumbing",
     expiresOn: "required",
     issuedOn: false,
     registrationNumber: true,
-    files: [document("The SAQCC Gas registration")],
-    hint: "Optional. A current SAQCC Gas registration lets you Quote on Jobs that install or remove gas.",
+    files: [document(t.gasPractitioner.document)],
+    hint: t.gasPractitioner.hint,
   },
   "registered-person": {
-    name: "Registered person",
+    name: t.registeredPerson.name,
     group: "category",
     category: "electrical",
     expiresOn: "none",
     issuedOn: false,
     registrationNumber: true,
-    files: [document("The registration certificate")],
-    hint: "Your registration as an electrical tester, installation electrician, or master installation electrician, in your own name.",
+    files: [document(t.registeredPerson.document)],
+    hint: t.registeredPerson.hint,
   },
   "electrical-contractor": {
-    name: "Electrical contractor registration",
+    name: t.electricalContractor.name,
     group: "category",
     category: "electrical",
     expiresOn: "required",
     issuedOn: false,
     registrationNumber: true,
-    files: [document("The registration certificate")],
-    hint: "Your current electrical contractor registration, in your own name. It is renewed yearly.",
+    files: [document(t.electricalContractor.document)],
+    hint: t.electricalContractor.hint,
   },
   "police-clearance": {
-    name: "Police clearance",
+    name: t.policeClearance.name,
     group: "optional",
     expiresOn: "none",
     issuedOn: true,
     registrationNumber: false,
-    files: [document("The police clearance certificate")],
-    hint: "Optional. Shown on your Profile with the day it was issued.",
+    files: [document(t.policeClearance.document)],
+    hint: t.policeClearance.hint,
   },
   "business-insurance": {
-    name: "Business insurance",
+    name: t.businessInsurance.name,
     group: "optional",
     expiresOn: "required",
     issuedOn: false,
     registrationNumber: false,
-    files: [document("The insurance certificate")],
-    hint: "Optional. Shown on your Profile with its expiry date.",
+    files: [document(t.businessInsurance.document)],
+    hint: t.businessInsurance.hint,
   },
 };
 
@@ -192,11 +195,7 @@ export const DOCUMENT_TYPES = ["sa-id", "refugee-id", "passport"] as const;
 
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
 
-export const DOCUMENT_TYPE_NAMES: Record<DocumentType, string> = {
-  "sa-id": "South African ID",
-  "refugee-id": "Refugee ID",
-  passport: "Passport",
-};
+export const DOCUMENT_TYPE_NAMES: Record<DocumentType, string> = copy.checks.documentTypes;
 
 /** South Africa, whose passport needs no work permit. */
 export const SOUTH_AFRICA = "ZA";

@@ -23,6 +23,7 @@ import { payoutReference } from "../payouts/rows";
 import { defineQueueItemKind, type Block, type DecisionField } from "../queues";
 import { accountSidebar } from "../quotes/held";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { DAY_MS, formatDay, formatTime, saDay } from "../shared/sa-days";
 import {
   accounts,
@@ -761,7 +762,7 @@ export async function signalIfSentBack(ctx: Context, payout: { artisanId: string
 
 // The Admin's side: the Signal's item.
 
-const TOLD = "The Account chosen, with the reason";
+const TOLD = copy.told.accountChosenWithReason;
 
 async function signalOf(ctx: Context, signalId: string) {
   const [row] = await ctx.db.select().from(signals).where(eq(signals.id, signalId));
@@ -817,12 +818,12 @@ function accountField(named: Named[]): DecisionField {
 const signalItem = defineQueueItemKind("signal", {
   queue: "signals",
   decisions: {
-    close: { label: "Close", told: "Nobody", reason: "optional", reasonLabel: "Note" },
+    close: { label: "Close", told: copy.told.nobody, reason: "optional", reasonLabel: "Note" },
     warn: { label: "Warn", told: TOLD, reason: "required" },
     suspend: { label: "Suspend", told: TOLD, reason: "required" },
     hold: {
       label: "Hold Payouts",
-      told: "The Artisan chosen",
+      told: copy.told.artisanChosen,
       reason: "optional",
       reasonLabel: "Note",
     },
