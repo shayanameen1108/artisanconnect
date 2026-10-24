@@ -117,8 +117,12 @@ export async function readFiles(ctx: Context, files: readonly StoredFile[]) {
           break;
         case "pdf": {
           const pages = await ctx.ports.contentReader.readPdf(bytes);
+          // A conversion with no pages, as one in a format it does not give,
+          // read nothing at all.
+          if (pages.length === 0) unread ??= "A PDF gave nothing to read.";
           // A scanned page is a picture of text, which text extraction cannot read.
-          if (pages.some((page) => !page)) unread ??= "A PDF with scanned pages cannot be read.";
+          else if (pages.some((page) => !page))
+            unread ??= "A PDF with scanned pages cannot be read.";
           texts.push(pages.join("\n\n"));
           break;
         }
