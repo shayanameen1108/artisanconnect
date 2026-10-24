@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { Link as LinkIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ArtisanProfileView } from "@/components/artisan-profile";
@@ -19,6 +19,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Choose } from "@/components/choose";
 import { EmptyState, Page, Refusal } from "@/components/page";
 import { ReportAction } from "@/components/report";
+import { useAction } from "@/components/use-action";
 import { copy, pageTitle } from "@/web/copy";
 import { inviteArtisan } from "@/web/invitations";
 import { getMyJobs } from "@/web/jobs";
@@ -158,21 +159,18 @@ function InviteDialog({
   trades: string;
   jobs: { jobId: string; title: string | null }[];
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [jobId, setJobId] = useState<string | null>(jobs.length === 1 ? jobs[0]!.jobId : null);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
   async function send() {
     if (!jobId) return;
-    setBusy(true);
-    setRefusal(null);
-    const invited = await inviteArtisan({ data: { jobId, artisanId } });
-    setBusy(false);
-    if (!invited.ok) return setRefusal(invited.refusal.message);
-    setOpen(false);
-    toast.success(t.invited(name));
-    await router.invalidate();
+    await action.run(
+      () => inviteArtisan({ data: { jobId, artisanId } }),
+      () => {
+        setOpen(false);
+        toast.success(t.invited(name));
+      },
+    );
   }
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -207,12 +205,12 @@ function InviteDialog({
             />
           </Field>
         )}
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>{t.cancel}</DialogClose>
           {jobs.length > 0 && (
-            <Button disabled={!jobId || busy} onClick={() => void send()}>
-              {busy && <Spinner data-icon="inline-start" />}
+            <Button disabled={!jobId || action.busy} onClick={() => void send()}>
+              {action.busy && <Spinner data-icon="inline-start" />}
               {t.sendInvitation}
             </Button>
           )}

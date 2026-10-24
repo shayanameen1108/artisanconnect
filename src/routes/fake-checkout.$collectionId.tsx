@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Page } from "@/components/page";
+import { Page, Refusal } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { formatRands } from "@/domain/shared/money";
 import { copy, pageTitle } from "@/web/copy";
 import { completeFakeCheckout, getFakeCheckout } from "@/web/fake-checkout";
@@ -22,12 +22,18 @@ export const Route = createFileRoute("/fake-checkout/$collectionId")({
 function FakeCheckout() {
   const checkout = Route.useLoaderData();
   const { collectionId } = Route.useParams();
-  const [busy, setBusy] = useState(false);
+  const action = useAction();
 
   async function complete(outcome: "succeed" | "fail") {
-    setBusy(true);
-    const { returnUrl } = await completeFakeCheckout({ data: { collectionId, outcome } });
-    window.location.assign(returnUrl);
+    await action.run(
+      async () => ({
+        ok: true as const,
+        value: await completeFakeCheckout({ data: { collectionId, outcome } }),
+      }),
+      ({ returnUrl }) => window.location.assign(returnUrl),
+      undefined,
+      false,
+    );
   }
 
   return (
@@ -44,19 +50,29 @@ function FakeCheckout() {
           </div>
           {checkout.state === "pending" ? (
             <div className="flex flex-wrap gap-2">
-              <Button disabled={busy} onClick={() => void complete("succeed")}>
+              <Button disabled={action.busy} onClick={() => void complete("succeed")}>
                 {t.pay}
               </Button>
-              <Button variant="outline" disabled={busy} onClick={() => void complete("fail")}>
+              <Button
+                variant="outline"
+                disabled={action.busy}
+                onClick={() => void complete("fail")}
+              >
                 {t.fail}
               </Button>
+              <Refusal message={action.refusal} />
             </div>
           ) : (
             <div className="space-y-2">
               <p className="text-sm">{t.closed}</p>
-              <Button variant="outline" disabled={busy} onClick={() => void complete("fail")}>
+              <Button
+                variant="outline"
+                disabled={action.busy}
+                onClick={() => void complete("fail")}
+              >
                 {t.back}
               </Button>
+              <Refusal message={action.refusal} />
             </div>
           )}
         </CardContent>

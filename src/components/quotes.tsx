@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useConfirm } from "@/components/confirm";
 import { FileText, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import { copy, formatDate } from "@/web/copy";
 import { declineQuote, hireQuote, type getJobQuotes } from "@/web/quotes";
 import type { ConversationSummary } from "@/components/conversation";
 import { ReportAction } from "@/components/report";
+import { useAction } from "@/components/use-action";
 
 const t = copy.quote;
 
@@ -339,18 +340,11 @@ function QuoteActions({
   conversationId: string | undefined;
 }) {
   const confirm = useConfirm();
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
 
   async function decline() {
     if (!(await confirm(q.declineConfirm))) return;
-    setBusy(true);
-    setRefusal(null);
-    const result = await declineQuote({ data: { quoteId: quote.quoteId } });
-    if (!result.ok) setRefusal(result.refusal.message);
-    await router.invalidate();
-    setBusy(false);
+    await action.run(() => declineQuote({ data: { quoteId: quote.quoteId } }));
   }
 
   return (
@@ -373,12 +367,12 @@ function QuoteActions({
             {copy.conversation.message}
           </Link>
         )}
-        <Button size="sm" variant="ghost" disabled={busy} onClick={() => void decline()}>
+        <Button size="sm" variant="ghost" disabled={action.busy} onClick={() => void decline()}>
           {q.decline}
         </Button>
         <ReportAction about={{ kind: "quote", id: quote.quoteId }} />
       </div>
-      <Refusal message={refusal} />
+      <Refusal message={action.refusal} />
     </div>
   );
 }
@@ -388,24 +382,14 @@ function QuoteActions({
  * Pay button, which opens the checkout; the Hire happens when the money arrives.
  */
 function Checkout({ quote }: { quote: ClientQuote }) {
-  const router = useRouter();
   const [acknowledged, setAcknowledged] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
 
   async function pay() {
-    setBusy(true);
-    setRefusal(null);
-    const opened = await hireQuote({
-      data: { quoteId: quote.quoteId, feeAcknowledged: acknowledged },
-    });
-    if (opened.ok) {
-      window.location.assign(opened.value.checkoutUrl);
-      return;
-    }
-    setRefusal(opened.refusal.message);
-    await router.invalidate();
-    setBusy(false);
+    await action.run(
+      () => hireQuote({ data: { quoteId: quote.quoteId, feeAcknowledged: acknowledged } }),
+      (opened) => window.location.assign(opened.checkoutUrl),
+    );
   }
 
   return (
@@ -432,14 +416,14 @@ function Checkout({ quote }: { quote: ClientQuote }) {
           />
           {q.hireAcknowledge(formatRands(quote.protectionFeeCents))}
         </Label>
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
         <Button
           size="lg"
           className="w-full"
-          disabled={busy || !acknowledged}
+          disabled={action.busy || !acknowledged}
           onClick={() => void pay()}
         >
-          {busy && <Spinner data-icon="inline-start" />}
+          {action.busy && <Spinner data-icon="inline-start" />}
           {q.hirePay(formatRands(quote.paymentCents))}
         </Button>
         <p className="text-xs text-muted-foreground">{q.hireLead}</p>
