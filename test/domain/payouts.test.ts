@@ -93,7 +93,6 @@ describe("the daily Payout run", () => {
     const admin = await given.admin();
     const { artisan } = await releasedJob(given);
     await releasedJob(given, { artisan });
-    payments.setFloat(10_000);
     const createPayout = payments.createPayout;
     let asked = 0;
     payments.createPayout = async (payout) => {
@@ -106,18 +105,18 @@ describe("the daily Payout run", () => {
     payments.createPayout = createPayout;
 
     clock.advance({ minutes: 1 });
-    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 0, floatShort: true });
+    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 0, floatShort: false });
     expect(
       (await domain.payouts.mine(artisan.actor))?.releases.map((release) => release.state),
     ).toEqual(["sent", "sent"]);
     expect(new Set(payoutsAsked(payments).map((payout) => payout.id)).size).toBe(2);
 
-    // The day's run is done: a later minute does nothing, and the float email went once.
+    // The day's run is done: a later minute does nothing, and the float email never went.
     clock.advance({ minutes: 1 });
     expect(await domain.system.runPayouts()).toEqual({ ran: false });
     expect(
       mailer.sentTo(admin.email).filter((email) => email.subject.includes("float")),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
   });
 });
 
@@ -617,17 +616,22 @@ describe("a Payout hold", () => {
 });
 
 describe("the float check", () => {
-  test("a float that cannot cover the run emails every Admin and shows a banner until it can", async () => {
+  test("a float that cannot cover the run emails every Admin, pauses the Payouts, and shows a banner until it can", async () => {
     const { domain, given, payments, mailer, clock } = await createHarness();
     const admin = await given.admin();
     const other = await given.admin({ email: "naledi@example.com" });
-    await releasedJob(given);
+    const { artisan } = await releasedJob(given);
     payments.setFloat(10_000);
     clock.set(RUN_AT);
 
-    // The Payouts still go: the provider pauses what it cannot pay.
-    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 1, floatShort: true });
-    expect(payoutsAsked(payments)).toHaveLength(1);
+    // The run pauses: the Payout waits unpaid, and nothing is asked of the provider.
+    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 0, floatShort: true });
+    expect(payoutsAsked(payments)).toEqual([]);
+    expect(await domain.payouts.mine(artisan.actor)).toMatchObject({
+      unpaidCents: 45_000,
+      paidCents: 0,
+      releases: [{ state: "sent" }],
+    });
 
     for (const email of [admin.email, other.email]) {
       expect(mailer.sentTo(email).at(-1)).toMatchObject({
@@ -644,8 +648,24 @@ describe("the float check", () => {
       checkedAt: clock.now(),
     });
 
+    // Still short a minute later: the run stays paused and the email does not repeat.
+    clock.advance({ minutes: 1 });
+    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 0, floatShort: true });
+    expect(
+      mailer.sentTo(admin.email).filter((email) => email.subject.includes("float")),
+    ).toHaveLength(1);
+
+    // Topped up, the next minute's run sends the paused Payout as any other.
     payments.setFloat(1_000_000);
     expect(await domain.payouts.float(admin.actor)).toEqual({ short: false });
+    clock.advance({ minutes: 1 });
+    expect(await domain.system.runPayouts()).toEqual({ ran: true, sent: 0, floatShort: false });
+    expect(payoutsAsked(payments)).toHaveLength(1);
+    expect((await domain.payouts.mine(artisan.actor))?.releases).toMatchObject([{ state: "sent" }]);
+
+    // The day's run is done: a later minute does nothing.
+    clock.advance({ minutes: 1 });
+    expect(await domain.system.runPayouts()).toEqual({ ran: false });
   });
 
   test("a float that covers the run emails nobody", async () => {
@@ -840,6 +860,40 @@ describe("a paused Payout", () => {
       "payout.paid",
     ]);
     expect((await domain.queues.home(admin.actor, { queue: "support" }))?.items).toEqual([]);
+  });
+
+  test("a Payout the float paused is told after 3 days, and goes once the float covers", async () => {
+    const { domain, given, payments, clock } = await createHarness();
+    const admin = await given.admin();
+    const { artisan } = await releasedJob(given);
+    payments.setFloat(10_000);
+    clock.set(RUN_AT);
+    await domain.system.runPayouts();
+
+    clock.advance({ days: 3, minutes: -1 });
+    await domain.system.runDueClocks();
+    expect(await payoutNotices(domain, artisan.actor)).toEqual([]);
+
+    clock.advance({ minutes: 1 });
+    await domain.system.runDueClocks();
+    expect(await payoutNotices(domain, artisan.actor)).toEqual([
+      expect.objectContaining({
+        event: "payout.delayed",
+        title: `Your Payout of ${formatRands(45_000)} is delayed, not lost`,
+      }),
+    ]);
+    expect((await domain.queues.home(admin.actor, { queue: "support" }))?.items).toMatchObject([
+      { title: `Paused money: a Payout of ${formatRands(45_000)} to Sipho Dlamini` },
+    ]);
+
+    // Topped up, the next run asks it and it is paid as any other.
+    payments.setFloat(1_000_000);
+    clock.advance({ hours: 1 });
+    await domain.system.runPayouts();
+    const [payout] = payoutsAsked(payments);
+    clock.advance({ hours: 1 });
+    await receive(domain, await payments.succeedPayout(payout!.id));
+    expect((await payoutNotices(domain, artisan.actor))[0]).toMatchObject({ event: "payout.paid" });
   });
 });
 

@@ -14,8 +14,9 @@ import type { Context } from "../context";
 import { causedBy } from "../errors";
 import { insertWhile } from "../guarded";
 import { LEDGER_KINDS, ledgerWrites } from "../ledger";
+import { startClock } from "../clocks";
 import { formatRands } from "../shared/money";
-import { HOUR_MS, MINUTE_MS, saDay, saDayStart } from "../shared/sa-days";
+import { DAY_MS, HOUR_MS, MINUTE_MS, saDay, saDayStart } from "../shared/sa-days";
 import {
   accounts,
   admins,
@@ -29,7 +30,7 @@ import {
 } from "../schema";
 import { emailAddress } from "../tells";
 import { currentPayoutAccount } from "../verification";
-import { payoutStopped } from "./events";
+import { PAUSED_CLOCK, payoutStopped } from "./events";
 import { UNSETTLED_STATES } from "../refunds/rows";
 import { payoutReference, UNPAID_STATES } from "./rows";
 
@@ -37,9 +38,10 @@ import { payoutReference, UNPAID_STATES } from "./rows";
 // Release owed to an Artisan with a current Payout account and no Payout
 // hold is sent as a Payout. Before it, the float's balance is checked; if it
 // cannot cover the run, every Admin is emailed (the one thing an Admin is
-// emailed about) and the Admin home shows a banner until it can. The Payouts
-// go all the same: the provider pauses what it cannot pay. A run that fails
-// part-way is retried each later minute that day, with no second float check.
+// emailed about), the Admin home shows a banner until it can, and every owed
+// Release waits as a paused Payout: unpaid, nobody told, until a later run
+// finds the float covering it. A run that fails part-way is retried each
+// later minute that day, with no second float check.
 // A Release whose Payout the bank refused or sent back is owed again, and
 // goes in the first run after the Admin accepts a new Payout account (#129).
 
@@ -77,12 +79,32 @@ export async function runPayouts(ctx: Context) {
     run = claimed;
     if (floatCents < neededCents) {
       await ctx.commit(await floatShortEmails(ctx, floatCents, neededCents));
+      // The float pauses the run: each Release owed waits as a paused Payout.
+      for (const release of owed) await pause(ctx, release);
+      return { ran: true as const, sent: 0, floatShort: true };
     }
+  }
+
+  if (run.floatCents < run.neededCents) {
+    // A run claimed while the float was short sends nothing until the float
+    // covers what is still owed; each later minute checks again.
+    const { cents: floatCents } = await ctx.ports.payments.getFloatBalance();
+    const stillNeeded =
+      (await floatNeededCents(ctx)) +
+      (await releasesToSend(ctx)).reduce((sum, r) => sum + r.amountCents, 0);
+    if (floatCents < stillNeeded) return { ran: true as const, sent: 0, floatShort: true };
+    // Covered: the run resumes, and a retry after a failure checks nothing again.
+    await ctx.db.update(payoutRuns).set({ floatCents }).where(eq(payoutRuns.day, day));
+    run = { ...run, floatCents };
   }
 
   let sent = 0;
   // A Payout an earlier run created but never heard back on is asked again, by the same id.
   for (const payout of await unanswered(ctx)) {
+    await ask(ctx, payout).catch((error: unknown) => failures.push(error));
+  }
+  // So is one the float paused, now that it covers.
+  for (const payout of await pausedPayouts(ctx)) {
     await ask(ctx, payout).catch((error: unknown) => failures.push(error));
   }
   for (const release of owed ?? (await releasesToSend(ctx))) {
@@ -184,13 +206,15 @@ async function releasesToSend(ctx: Context) {
 
 type Release = Awaited<ReturnType<typeof releasesToSend>>[number];
 
+type PayoutState = "created" | "paused";
+
 /**
- * Creates the Payout of one Release owed, with its ledger row, then asks the
- * adapter to send it. False if another run created it first, the Admin held
- * the Artisan's Payouts since they were read, or the bank stopped the
- * account since, as it may for an earlier Payout of this run.
+ * Writes the Payout of one Release owed, with its ledger row, in the given
+ * state. False if another run created it first, the Admin held the Artisan's
+ * Payouts since they were read, or the bank stopped the account since, as it
+ * may for an earlier Payout of this run.
  */
-async function send(ctx: Context, release: Release): Promise<boolean> {
+async function createPayout(ctx: Context, release: Release, state: PayoutState) {
   if (!release.paymentId) throw new Error(`Release ${release.owedEntryId} has no Payment`);
   const payout = {
     id: ctx.newId(),
@@ -199,10 +223,10 @@ async function send(ctx: Context, release: Release): Promise<boolean> {
     engagementId: release.engagementId,
     payoutAccountId: release.account.id,
     amountCents: release.amountCents,
-    state: "created" as const,
+    state,
     refusedFor: null,
     createdAt: ctx.now(),
-    pausedAt: null,
+    pausedAt: state === "paused" ? ctx.now() : null,
     paidAt: null,
     stoppedAt: null,
   };
@@ -215,6 +239,16 @@ async function send(ctx: Context, release: Release): Promise<boolean> {
         payout,
         and(notHeld(ctx, release.artisanId), notStopped(ctx, release.account.id))!,
       ),
+      // As a provider's pause would: after 3 days the Artisan is told it is delayed, not lost.
+      ...(state === "paused"
+        ? [
+            startClock(ctx, {
+              kind: PAUSED_CLOCK,
+              subjectId: payout.id,
+              dueAt: new Date(ctx.now().getTime() + 3 * DAY_MS),
+            }),
+          ]
+        : []),
       ...ledgerWrites(
         ctx,
         [
@@ -242,9 +276,25 @@ async function send(ctx: Context, release: Release): Promise<boolean> {
     .select({ id: payouts.id })
     .from(payouts)
     .where(eq(payouts.id, payout.id));
-  if (!written) return false;
+  return written ? payout : false;
+}
+
+/**
+ * Creates the Payout of one Release owed, then asks the adapter to send it.
+ */
+async function send(ctx: Context, release: Release): Promise<boolean> {
+  const payout = await createPayout(ctx, release, "created");
+  if (!payout) return false;
   await ask(ctx, { ...payout, account: release.account });
   return true;
+}
+
+/**
+ * Creates the Payout of one Release owed as paused, because the float cannot
+ * cover it: unpaid, nobody told, until a later run finds it can and asks.
+ */
+async function pause(ctx: Context, release: Release): Promise<boolean> {
+  return !!(await createPayout(ctx, release, "paused"));
 }
 
 /**
@@ -255,21 +305,35 @@ async function send(ctx: Context, release: Release): Promise<boolean> {
  */
 async function unanswered(ctx: Context) {
   const asked = [];
-  for (const row of await createdPayouts(ctx, { held: false })) {
+  for (const row of await payoutsIn(ctx, "created", { held: false })) {
     const current = await currentPayoutAccount(ctx, row.payout.artisanId);
     if (current?.id === row.account.id) asked.push({ ...row.payout, account: row.account });
   }
   return asked;
 }
 
-/** The Payouts still created, oldest first, with the account each goes to. */
-async function createdPayouts(ctx: Context, { held }: { held: boolean }) {
+/**
+ * The Payouts the float paused, oldest first, with the account each goes to
+ * while their Artisan's Payouts are not held and that account is still
+ * current - asked again once the float covers.
+ */
+async function pausedPayouts(ctx: Context) {
+  const asked = [];
+  for (const row of await payoutsIn(ctx, "paused", { held: false })) {
+    const current = await currentPayoutAccount(ctx, row.payout.artisanId);
+    if (current?.id === row.account.id) asked.push({ ...row.payout, account: row.account });
+  }
+  return asked;
+}
+
+/** The Payouts still in a state, oldest first, with the account each goes to. */
+async function payoutsIn(ctx: Context, state: PayoutState, { held }: { held: boolean }) {
   return ctx.db
     .select({ payout: payouts, account: verificationChecks })
     .from(payouts)
     .innerJoin(verificationChecks, eq(verificationChecks.id, payouts.payoutAccountId))
     .innerJoin(accounts, eq(accounts.id, payouts.artisanId))
-    .where(and(eq(payouts.state, "created"), held ? undefined : isNull(accounts.payoutsHeldAt)))
+    .where(and(eq(payouts.state, state), held ? undefined : isNull(accounts.payoutsHeldAt)))
     .orderBy(asc(payouts.createdAt), asc(payouts.id));
 }
 
@@ -287,7 +351,7 @@ const ASKING_FOR_MS = HOUR_MS;
  */
 async function settleUnsent(ctx: Context, failures: unknown[]) {
   const askedBefore = new Date(ctx.now().getTime() - ASKING_FOR_MS);
-  for (const { payout } of await createdPayouts(ctx, { held: true })) {
+  for (const { payout } of await payoutsIn(ctx, "created", { held: true })) {
     if (payout.createdAt > askedBefore) continue;
     try {
       const current = await currentPayoutAccount(ctx, payout.artisanId);
@@ -355,11 +419,11 @@ async function ask(
     await payoutStopped(ctx, payout.id, { to: "refused", reason: answer.reason });
     return;
   }
-  // Only from created: its event may have arrived first.
+  // Only from created or paused: its event may have arrived first.
   await ctx.db
     .update(payouts)
     .set({ state: "pending" })
-    .where(and(eq(payouts.id, payout.id), eq(payouts.state, "created")));
+    .where(and(eq(payouts.id, payout.id), inArray(payouts.state, ["created", "paused"])));
 }
 
 /** The emails telling every Admin the float cannot cover the run. */
@@ -375,7 +439,7 @@ async function floatShortEmails(ctx: Context, floatCents: number, neededCents: n
       link: "/admin",
       body: [
         `The float holds ${formatRands(floatCents)}, and today's Payouts and the Refunds on their way need ${formatRands(neededCents)}.`,
-        "The Payouts were sent all the same. The provider pauses what it cannot pay until the float is topped up; nobody is told meanwhile.",
+        "The Payouts wait, unpaid, until the float is topped up; nobody is told unless they stay paused three days.",
         "The Admin home shows a banner until the float can cover them.",
       ].join("\n\n"),
     }),
