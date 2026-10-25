@@ -895,6 +895,52 @@ describe("a paused Payout", () => {
     await receive(domain, await payments.succeedPayout(payout!.id));
     expect((await payoutNotices(domain, artisan.actor))[0]).toMatchObject({ event: "payout.paid" });
   });
+
+  test("a Payout the float paused on an account since stopped is owed again on the new one", async () => {
+    const { domain, given, payments, clock } = await createHarness();
+    const admin = await given.admin();
+    const { artisan } = await releasedJob(given);
+    payments.setFloat(10_000);
+    clock.set(RUN_AT);
+    await domain.system.runPayouts();
+    expect(payoutsAsked(payments)).toEqual([]);
+
+    // The letter was not the Artisan's: the account goes while the Payout
+    // waits, and no provider event will ever come for a Payout never sent.
+    await removePayoutAccount(domain, admin);
+    clock.advance({ hours: 2 });
+    await domain.system.runPayouts();
+
+    const checkId = await submit(domain, artisan, payoutAccount({ accountNumber: "9876543210" }));
+    const { id: itemId } = await verificationItem(domain, admin);
+    const accepted = await decideCheck(domain, admin, { itemId, checkId }, "accept");
+    if (!accepted.ok) throw new Error(accepted.refusal.message);
+    payments.setFloat(1_000_000);
+    clock.advance({ days: 1 });
+    await domain.system.runPayouts();
+
+    expect(payoutsAsked(payments).map((payout) => payout.bankAccount.accountNumber)).toEqual([
+      "9876543210",
+    ]);
+  });
+
+  test("a Release owed while the float is short waits as a paused Payout too", async () => {
+    const { domain, given, payments, clock } = await createHarness();
+    const { artisan } = await releasedJob(given);
+    payments.setFloat(10_000);
+    clock.set(RUN_AT);
+    await domain.system.runPayouts();
+
+    // The second Job's Release lands while the float is still short.
+    await releasedJob(given, { artisan });
+    clock.advance({ minutes: 5 });
+    await domain.system.runPayouts();
+    expect(payoutsAsked(payments)).toEqual([]);
+
+    clock.advance({ days: 3 });
+    await domain.system.runDueClocks();
+    expect(await payoutNotices(domain, artisan.actor)).toHaveLength(2);
+  });
 });
 
 describe("the Payouts view", () => {

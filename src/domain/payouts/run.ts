@@ -89,10 +89,14 @@ export async function runPayouts(ctx: Context) {
     // A run claimed while the float was short sends nothing until the float
     // covers what is still owed; each later minute checks again.
     const { cents: floatCents } = await ctx.ports.payments.getFloatBalance();
+    const fresh = await releasesToSend(ctx);
     const stillNeeded =
-      (await floatNeededCents(ctx)) +
-      (await releasesToSend(ctx)).reduce((sum, r) => sum + r.amountCents, 0);
-    if (floatCents < stillNeeded) return { ran: true as const, sent: 0, floatShort: true };
+      (await floatNeededCents(ctx)) + fresh.reduce((sum, r) => sum + r.amountCents, 0);
+    if (floatCents < stillNeeded) {
+      // A Release owed while the float is short waits as a paused Payout too.
+      for (const release of fresh) await pause(ctx, release);
+      return { ran: true as const, sent: 0, floatShort: true };
+    }
     // Covered: the run resumes, and a retry after a failure checks nothing again.
     await ctx.db.update(payoutRuns).set({ floatCents }).where(eq(payoutRuns.day, day));
     run = { ...run, floatCents };
@@ -305,7 +309,7 @@ async function pause(ctx: Context, release: Release): Promise<boolean> {
  */
 async function unanswered(ctx: Context) {
   const asked = [];
-  for (const row of await payoutsIn(ctx, "created", { held: false })) {
+  for (const row of await payoutsIn(ctx, ["created"], { held: false })) {
     const current = await currentPayoutAccount(ctx, row.payout.artisanId);
     if (current?.id === row.account.id) asked.push({ ...row.payout, account: row.account });
   }
@@ -319,21 +323,21 @@ async function unanswered(ctx: Context) {
  */
 async function pausedPayouts(ctx: Context) {
   const asked = [];
-  for (const row of await payoutsIn(ctx, "paused", { held: false })) {
+  for (const row of await payoutsIn(ctx, ["paused"], { held: false })) {
     const current = await currentPayoutAccount(ctx, row.payout.artisanId);
     if (current?.id === row.account.id) asked.push({ ...row.payout, account: row.account });
   }
   return asked;
 }
 
-/** The Payouts still in a state, oldest first, with the account each goes to. */
-async function payoutsIn(ctx: Context, state: PayoutState, { held }: { held: boolean }) {
+/** The Payouts still in the given states, oldest first, with the account each goes to. */
+async function payoutsIn(ctx: Context, states: PayoutState[], { held }: { held: boolean }) {
   return ctx.db
     .select({ payout: payouts, account: verificationChecks })
     .from(payouts)
     .innerJoin(verificationChecks, eq(verificationChecks.id, payouts.payoutAccountId))
     .innerJoin(accounts, eq(accounts.id, payouts.artisanId))
-    .where(and(eq(payouts.state, state), held ? undefined : isNull(accounts.payoutsHeldAt)))
+    .where(and(inArray(payouts.state, states), held ? undefined : isNull(accounts.payoutsHeldAt)))
     .orderBy(asc(payouts.createdAt), asc(payouts.id));
 }
 
@@ -341,17 +345,18 @@ async function payoutsIn(ctx: Context, state: PayoutState, { held }: { held: boo
 const ASKING_FOR_MS = HOUR_MS;
 
 /**
- * Each Payout created but never answered whose account is no longer the
- * Artisan's current one, such as one the bank stopped meanwhile: it is not
- * asked again, as that would send it to that account. If the provider never
- * had it, it is unsent and its Release is owed again; if it had it, it
- * stands as the provider says. One created within the hour is left, as a
- * run may still be asking for it. A Payout that cannot be settled is a
- * failure of the run, and waits for its next minute.
+ * Each Payout created but never answered, or paused, whose account is no
+ * longer the Artisan's current one, such as one the bank stopped meanwhile:
+ * it is not asked again, as that would send it to that account. If the
+ * provider never had it - as it never does for one the float paused - it is
+ * unsent and its Release is owed again; if it had it, it stands as the
+ * provider says, so a provider-paused one stays paused. One created within
+ * the hour is left, as a run may still be asking for it. A Payout that
+ * cannot be settled is a failure of the run, and waits for its next minute.
  */
 async function settleUnsent(ctx: Context, failures: unknown[]) {
   const askedBefore = new Date(ctx.now().getTime() - ASKING_FOR_MS);
-  for (const { payout } of await payoutsIn(ctx, "created", { held: true })) {
+  for (const { payout } of await payoutsIn(ctx, ["created", "paused"], { held: true })) {
     if (payout.createdAt > askedBefore) continue;
     try {
       const current = await currentPayoutAccount(ctx, payout.artisanId);
@@ -361,10 +366,11 @@ async function settleUnsent(ctx: Context, failures: unknown[]) {
         await payoutStopped(ctx, payout.id, { to: "refused", reason: "refused" });
         continue;
       }
+      if (known && payout.state === "paused") continue;
       await ctx.db
         .update(payouts)
         .set(known ? { state: "pending" } : { state: "unsent", stoppedAt: ctx.now() })
-        .where(and(eq(payouts.id, payout.id), eq(payouts.state, "created")));
+        .where(and(eq(payouts.id, payout.id), inArray(payouts.state, ["created", "paused"])));
     } catch (error) {
       failures.push(error);
     }
