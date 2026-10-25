@@ -1,6 +1,6 @@
 import { expect, seed, signIn, test } from "./support/helpers";
 
-// Server functions POST to /_server; aborting one acts out a dropped
+// Server functions POST to /_serverFn; aborting one acts out a dropped
 // connection without touching anything the page shows.
 test("a dropped save keeps the draft's Title, says it may be tried again, and frees the button", async ({
   page,
@@ -8,7 +8,7 @@ test("a dropped save keeps the draft's Title, says it may be tried again, and fr
   const { email, password } = seed<{ email: string; password: string }>("hire");
   await signIn(page, { email, password });
 
-  await page.route(/\/_server(\/|$)/, (route) => route.abort());
+  await page.route(/\/_serverFn(\/|$)/, (route) => route.abort());
   await page.goto("/jobs/new");
   const title = page.getByLabel("Title", { exact: true });
   await title.fill("Kitchen tap leaks");
