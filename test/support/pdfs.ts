@@ -13,6 +13,11 @@ export function pagesOf(pdf: Uint8Array): string[] | null {
   return written.get(keyOf(pdf)) ?? null;
 }
 
+/** What the fake content reader gives for the PDF, as a conversion may give no pages. */
+export function readPdfAs(pdf: Uint8Array, pages: string[]) {
+  written.set(keyOf(pdf), pages);
+}
+
 function keyOf(pdf: Uint8Array): string {
   let key = "";
   for (let at = 0; at < pdf.length; at += 0x8000) {

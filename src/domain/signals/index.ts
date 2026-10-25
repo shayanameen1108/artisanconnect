@@ -23,6 +23,7 @@ import { payoutReference } from "../payouts/rows";
 import { defineQueueItemKind, type Block, type DecisionField } from "../queues";
 import { accountSidebar } from "../quotes/held";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { DAY_MS, formatDay, formatTime, saDay } from "../shared/sa-days";
 import {
   accounts,
@@ -718,26 +719,13 @@ export async function recordRefusal(ctx: Context, sent: SentOn, reason: string) 
 }
 
 /**
- * The writes, in the batch that marks a Payout sent back, that raise a Signal
- * if the bank sent back another of the Artisan's within 90 days; only if the
- * batch does mark it, as the condition says. The earlier ones are read before
- * the batch, so two send-back events handled at the same moment would each
- * miss the other; they come one by one, and both stay in the money history.
+ * Looks at an Artisan's sent-back Payouts, after one is sent back: a second
+ * within 90 days raises a Signal (#140). It reads after the send-back's
+ * commit, like the other detectors, so two send-backs handled at the same
+ * moment do not each miss the other; whoever commits second sees both.
  */
-export async function sentBackSignalWrites(
-  ctx: Context,
-  payout: {
-    id: string;
-    artisanId: string;
-    artisanName: string;
-    amountCents: number;
-    jobTitle: string;
-  },
-  reason: string,
-  condition: SQL,
-): Promise<Write[]> {
-  const now = ctx.now();
-  const earlier = await ctx.db
+export async function signalIfSentBack(ctx: Context, payout: { artisanId: string }) {
+  const rows = await ctx.db
     .select({
       id: payouts.id,
       at: payouts.stoppedAt,
@@ -752,39 +740,29 @@ export async function sentBackSignalWrites(
       and(
         eq(payouts.artisanId, payout.artisanId),
         eq(payouts.state, "sent-back"),
-        ne(payouts.id, payout.id),
         gte(payouts.stoppedAt, since(ctx, SENT_BACK_WITHIN_DAYS)),
       ),
     )
     .orderBy(desc(payouts.stoppedAt));
-  if (earlier.length === 0) return [];
-  const line = (each: {
-    id: string;
-    at: Date;
-    cents: number;
-    title: string;
-    reason: string | null;
-  }) =>
-    `${formatTime(each.at)} · ${payoutReference(each.id)} of ${formatRands(each.cents)} for ${each.title}: sent back${each.reason ? ` (${each.reason})` : ""}.`;
-  return signalWrites(
+  await raise(
     ctx,
-    {
-      kind: "sent-back",
-      accountId: payout.artisanId,
-      title: `A second Payout sent back within ${SENT_BACK_WITHIN_DAYS} days: ${payout.artisanName}`,
-      found: [payout.id, ...earlier.map((each) => each.id)],
-      evidence: [
-        line({ id: payout.id, at: now, cents: payout.amountCents, title: payout.jobTitle, reason }),
-        ...earlier.map((each) => line({ ...each, at: each.at! })),
-      ],
-    },
-    condition,
+    repeated(
+      ctx,
+      "sent-back",
+      payout.artisanId,
+      rows.map((row) => ({
+        id: row.id,
+        line: `${formatTime(row.at!)} · ${payoutReference(row.id)} of ${formatRands(row.cents)} for ${row.title}: sent back${row.reason ? ` (${row.reason})` : ""}.`,
+      })),
+      2,
+      (name) => `A second Payout sent back within ${SENT_BACK_WITHIN_DAYS} days: ${name}`,
+    ),
   );
 }
 
 // The Admin's side: the Signal's item.
 
-const TOLD = "The Account chosen, with the reason";
+const TOLD = copy.told.accountChosenWithReason;
 
 async function signalOf(ctx: Context, signalId: string) {
   const [row] = await ctx.db.select().from(signals).where(eq(signals.id, signalId));
@@ -840,12 +818,12 @@ function accountField(named: Named[]): DecisionField {
 const signalItem = defineQueueItemKind("signal", {
   queue: "signals",
   decisions: {
-    close: { label: "Close", told: "Nobody", reason: "optional", reasonLabel: "Note" },
+    close: { label: "Close", told: copy.told.nobody, reason: "optional", reasonLabel: "Note" },
     warn: { label: "Warn", told: TOLD, reason: "required" },
     suspend: { label: "Suspend", told: TOLD, reason: "required" },
     hold: {
       label: "Hold Payouts",
-      told: "The Artisan chosen",
+      told: copy.told.artisanChosen,
       reason: "optional",
       reasonLabel: "Note",
     },

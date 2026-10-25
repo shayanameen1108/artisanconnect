@@ -4,6 +4,7 @@ import type { Context, Write } from "../context";
 import { causedBy } from "../errors";
 import { defineQueueItemKind, type ItemView, type QueueItem, type QueueItemKind } from "../queues";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { queueItems } from "../schema";
 import { tell } from "../tells";
 
@@ -53,7 +54,7 @@ export function defineHeldKind(kind: string, definition: HeldKindDefinition): He
       release: { label: "Release", told: "The sender", reason: "optional" },
       refuse: { label: "Refuse", told: "The sender, with the reason", reason: "required" },
       // Recorded by the sender, never offered to the Admin.
-      [WITHDRAWN]: { label: "Withdrawn by the sender", told: "Nobody", reason: "none" },
+      [WITHDRAWN]: { label: "Withdrawn by the sender", told: copy.told.nobody, reason: "none" },
     },
     async allowed() {
       return ["release", "refuse"];

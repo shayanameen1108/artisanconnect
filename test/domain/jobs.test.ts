@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import { visitor, type Actor, type AdminActor } from "@/domain/shared/actor";
 import { createHarness, type Harness } from "../support/harness";
 import { photo } from "../support/verification";
+import { draftFields } from "@/domain/jobs/inputs";
 
 // A Client posts a Job (#121): its trade, site, details, and photos, and
 // "Find Artisans for me" or "Only Artisans I invite". A Draft may omit
@@ -110,6 +111,22 @@ describe("a Draft", () => {
 });
 
 describe("posting a Job", () => {
+  test("asks only the allowed fields, never a budget, phone number, measurements, or materials (#111 story 57)", () => {
+    expect(Object.keys(draftFields.shape).sort()).toEqual(
+      [
+        "category",
+        "description",
+        "gasWork",
+        "matching",
+        "preferredStart",
+        "siteType",
+        "street",
+        "suburbId",
+        "title",
+      ].sort(),
+    );
+  });
+
   test("needs its Client while a Quote is Sent on it, and again while its work awaits Approval (#111 story 67)", async () => {
     const { domain, given } = await createHarness();
     const client = await given.client();

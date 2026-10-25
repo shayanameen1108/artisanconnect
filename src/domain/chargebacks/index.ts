@@ -23,6 +23,7 @@ import { accountSidebar } from "../quotes/held";
 import { leftByPayment, refundWrites, sendEngagementRefunds, waitingRefund } from "../refunds";
 import { insertWhile } from "../guarded";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { formatTime } from "../shared/sa-days";
 import {
   accounts,
@@ -377,7 +378,7 @@ export const chargebackItem = defineQueueItemKind("chargeback", {
     // Recorded on the others when one decision decides several, never offered to the Admin.
     [TOGETHER]: {
       label: "Decided with the Engagement's other Chargeback",
-      told: "Nobody",
+      told: copy.told.nobody,
       reason: "none",
     },
   },

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { MapPin, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { initials } from "@/components/app-header";
 import { NoticeList, useNoticesSeen } from "@/components/notice-list";
 import { EmptyState, NextStepCard, Page, Refusal, withSidebar } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { REGIONS_MAX } from "@/domain/shared/places";
 import { formatRands } from "@/domain/shared/money";
 import { getNotices } from "@/web/accounts";
@@ -259,22 +260,16 @@ function PassableRow({
   when: string;
   pass: (input: { data: { jobId: string } }) => Promise<Result>;
 }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-
-  async function passIt() {
-    setBusy(true);
-    setRefusal(null);
-    const result = await pass({ data: { jobId: job.jobId } });
-    if (!result.ok) setRefusal(result.refusal.message);
-    await router.invalidate();
-    setBusy(false);
-  }
+  const action = useAction();
 
   return (
-    <JobListRow job={job} when={when} refusal={refusal}>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void passIt()}>
+    <JobListRow job={job} when={when} refusal={action.refusal}>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={action.busy}
+        onClick={() => void action.run(() => pass({ data: { jobId: job.jobId } }))}
+      >
         {t.pass}
       </Button>
     </JobListRow>
@@ -419,18 +414,7 @@ function ProfileCard({ work }: { work: Work }) {
 
 /** The Available for Jobs switch. Off stops Job Matches and hides nothing. */
 function Availability({ available }: { available: boolean }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
-
-  async function change(next: boolean) {
-    setBusy(true);
-    setRefusal(null);
-    const result = await setAvailableForJobs({ data: { available: next } });
-    if (!result.ok) setRefusal(result.refusal.message);
-    await router.invalidate();
-    setBusy(false);
-  }
+  const action = useAction();
 
   return (
     <div className="space-y-2">
@@ -439,12 +423,14 @@ function Availability({ available }: { available: boolean }) {
         <Switch
           id="available"
           checked={available}
-          disabled={busy}
-          onCheckedChange={(next) => void change(next)}
+          disabled={action.busy}
+          onCheckedChange={(next) =>
+            void action.run(() => setAvailableForJobs({ data: { available: next } }))
+          }
         />
       </div>
       <p className="text-xs text-muted-foreground">{available ? t.availableOn : t.availableOff}</p>
-      <Refusal message={refusal} />
+      <Refusal message={action.refusal} />
     </div>
   );
 }

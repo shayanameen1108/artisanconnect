@@ -1,11 +1,11 @@
 import { Banknote } from "lucide-react";
-import { useState } from "react";
-import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, rowLink, type DataColumn } from "@/components/data-table";
 import { EmptyState, Page } from "@/components/page";
+import { useAction, type Outcome } from "@/components/use-action";
 import { formatRands } from "@/domain/shared/money";
 import { copy, pageTitle } from "@/web/copy";
 import { onlyForAdmins } from "@/web/guards";
@@ -86,16 +86,15 @@ function AdminPayouts() {
 
 /** Holds the Artisan's Payouts, or lifts the hold; a refusal shows as a toast. */
 function HoldToggle({ row }: { row: Row }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const action = useAction();
 
   async function toggle() {
-    setBusy(true);
     const change = row.held ? liftPayoutHold : holdPayouts;
-    const result = await change({ data: { artisanId: row.artisanId } });
-    if (!result.ok) toast.error(result.refusal.message);
-    await router.invalidate();
-    setBusy(false);
+    await action.run(
+      (): Promise<Outcome> => change({ data: { artisanId: row.artisanId } }),
+      undefined,
+      (message) => toast.error(message),
+    );
   }
 
   return (
@@ -104,7 +103,7 @@ function HoldToggle({ row }: { row: Row }) {
       variant="outline"
       size="sm"
       className="relative z-10"
-      disabled={busy}
+      disabled={action.busy}
       onClick={() => void toggle()}
     >
       {row.held ? t.lift : t.hold}

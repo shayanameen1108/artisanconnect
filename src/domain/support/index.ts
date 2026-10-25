@@ -7,6 +7,7 @@ import { insertWhile } from "../guarded";
 import { defineQueueItemKind, type ItemView } from "../queues";
 import { owedByHand, paidByHandWrites } from "../refunds/by-hand";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { accounts, authUsers, queueItems, supportRequests } from "../schema";
 import { defineSection } from "../section";
 import { emailAddress } from "../tells";
@@ -39,7 +40,7 @@ const accountRequest = defineQueueItemKind("support.request", {
   decisions: {
     answer: {
       label: "Answer",
-      told: "The Account, by email",
+      told: copy.told.accountByEmail,
       reason: "required",
       reasonLabel: "Answer",
     },
@@ -98,7 +99,7 @@ type SystemSupportRequest = {
 const systemRequest = defineQueueItemKind("support.system", {
   queue: "support",
   decisions: {
-    resolve: { label: "Resolve", told: "Nobody", reason: "optional", reasonLabel: "Note" },
+    resolve: { label: "Resolve", told: copy.told.nobody, reason: "optional", reasonLabel: "Note" },
     "paid-by-hand": {
       label: "Record the bank transfer",
       told: "The Client, with a Receipt",

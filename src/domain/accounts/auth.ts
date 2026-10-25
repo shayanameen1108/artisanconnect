@@ -7,15 +7,11 @@ import { defaultStatements } from "better-auth/plugins/admin/access";
 import type { Context } from "../context";
 import { authCredentials, authSessions, authUsers, authVerifications } from "../schema";
 import { EMAIL_CODE, PASSWORD_LENGTH } from "./inputs";
+import { copy } from "../shared/copy";
 
 type CodePurpose = "sign-in" | "email-verification" | "forget-password" | "change-email";
 
-const CODE_EMAIL_SUBJECT: Record<CodePurpose, string> = {
-  "email-verification": "Your ArtisanConnect sign-up code",
-  "forget-password": "Your ArtisanConnect recovery code",
-  "sign-in": "Your ArtisanConnect sign-in code",
-  "change-email": "Your ArtisanConnect Email code",
-};
+const CODE_EMAIL_SUBJECT: Record<CodePurpose, string> = copy.email.codeSubject;
 
 /**
  * better-auth (ADR 0017): Email and password plus Email codes. No social

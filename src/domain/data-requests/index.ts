@@ -6,6 +6,7 @@ import { closeAccount, closedRefusal, closedState } from "../accounts/closing";
 import type { Context, Write } from "../context";
 import { WITHDRAWN } from "../content/held";
 import { formatRands } from "../shared/money";
+import { copy } from "../shared/copy";
 import { defineQueueItemKind, type ItemView } from "../queues";
 import { peoplePage } from "../quotes/held";
 import { ok, refuse } from "../shared/result";
@@ -25,10 +26,7 @@ import { exportOf } from "./export";
 
 type DataRequestKind = (typeof DATA_REQUEST_KINDS)[number];
 
-const KIND_NAMES: Record<DataRequestKind, string> = {
-  copy: "A copy of the data",
-  erasure: "Erasure",
-};
+const KIND_NAMES: Record<DataRequestKind, string> = copy.dataRequests.kinds;
 
 const requestInput = z.object({
   kind: z.enum(DATA_REQUEST_KINDS, { error: "Ask for a copy of your data, or for erasure." }),
@@ -42,11 +40,27 @@ function exportKey(requestId: string) {
 const dataRequest = defineQueueItemKind("data.request", {
   queue: "data-requests",
   decisions: {
-    "send-export": { label: "Send the export", told: "The Account, by email", reason: "none" },
-    erase: { label: "Erase the Account", told: "The Account, by email", reason: "none" },
-    refuse: { label: "Refuse", told: "The Account, by email", reason: "required" },
+    "send-export": {
+      label: copy.dataRequests.decisions["send-export"],
+      told: copy.told.accountByEmail,
+      reason: "none",
+    },
+    erase: {
+      label: copy.dataRequests.decisions.erase,
+      told: copy.told.accountByEmail,
+      reason: "none",
+    },
+    refuse: {
+      label: copy.dataRequests.decisions.refuse,
+      told: copy.told.accountByEmail,
+      reason: "required",
+    },
     // Recorded as the Account reopens, never offered to the Admin.
-    [WITHDRAWN]: { label: "Withdrawn as the Account reopened", told: "Nobody", reason: "none" },
+    [WITHDRAWN]: {
+      label: copy.dataRequests.decisions.withdrawn,
+      told: copy.told.nobody,
+      reason: "none",
+    },
   },
   async allowed(ctx, item) {
     const request = await requestRow(ctx, item.subjectId);
@@ -106,7 +120,7 @@ const dataRequest = defineQueueItemKind("data.request", {
         await ctx.ports.mailer
           .send({
             to: request.email,
-            subject: "Your ArtisanConnect data is erased",
+            subject: copy.email.dataErased,
             text: [
               "As you asked, your ArtisanConnect Account is erased: its names, Email, and password are gone, and it cannot be reopened.",
               "We keep its money records, and its Reviews are shown without a name.",
@@ -121,22 +135,28 @@ const dataRequest = defineQueueItemKind("data.request", {
   async view(ctx, item) {
     const request = await requestRow(ctx, item.subjectId);
     if (!request) return { tabs: [], sidebar: [] };
-    const facts = [
-      { label: "Asks for", value: KIND_NAMES[request.kind] },
+    const facts: { label: string; value: string }[] = [
+      { label: copy.dataRequests.labels.asksFor, value: KIND_NAMES[request.kind] },
       {
-        label: "Account",
+        label: copy.dataRequests.labels.account,
         value: request.erasedAt ? "Erased" : request.closedAt ? "Closed" : "Open",
       },
     ];
     if (request.kind === "erasure" && !request.erasedAt) {
       const owed = await stillOwedCents(ctx, ownerOf(request));
       facts.push({
-        label: "Still owed to it",
+        label: copy.dataRequests.labels.stillOwed,
         value: owed > 0 ? `${formatRands(owed)}. Erase it once this is paid.` : "Nothing",
       });
     }
     const view: ItemView = {
-      tabs: [{ key: "request", label: "Request", blocks: [{ kind: "facts", facts }] }],
+      tabs: [
+        {
+          key: "request",
+          label: copy.dataRequests.labels.requestTab,
+          blocks: [{ kind: "facts", facts }],
+        },
+      ],
       sidebar: [
         {
           title: "Account",
@@ -144,12 +164,19 @@ const dataRequest = defineQueueItemKind("data.request", {
             {
               kind: "facts",
               facts: [
-                { label: "Kind", value: request.accountKind === "client" ? "Client" : "Artisan" },
-                { label: "Name", value: request.name },
-                { label: "Email", value: request.email },
+                {
+                  label: copy.dataRequests.labels.kind,
+                  value: request.accountKind === "client" ? "Client" : "Artisan",
+                },
+                { label: copy.dataRequests.labels.name, value: request.name },
+                { label: copy.dataRequests.labels.email, value: request.email },
               ],
             },
-            { kind: "link", label: "Open on the People page", href: peoplePage(request.accountId) },
+            {
+              kind: "link",
+              label: copy.dataRequests.labels.openOnPeoplePage,
+              href: peoplePage(request.accountId),
+            },
           ],
         },
       ],

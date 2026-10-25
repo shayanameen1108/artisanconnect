@@ -39,6 +39,29 @@ describe("a second sent-back Payout", () => {
     expect((await domain.notices.list(artisan.actor)).length).toBe(told.length + 1);
   });
 
+  test("still raises the Signal when two send-backs are handled at the same moment", async () => {
+    const { domain, given, payments, clock } = await createHarness();
+    const admin = await given.admin();
+    const { artisan } = await releasedJob(given);
+    await releasedJob(given, { artisan });
+    clock.set(RUN_AT);
+    await domain.system.runPayouts();
+    const [first, second] = payoutsAsked(payments);
+    await receive(domain, await payments.succeedPayout(first!.id));
+    await receive(domain, await payments.succeedPayout(second!.id));
+
+    // Each event builds its Signal writes before either commits, so both see
+    // no earlier send-back unless the detection reads after the commit.
+    await Promise.all([
+      receive(domain, await payments.sendBackPayout(first!.id, "account_closed")),
+      receive(domain, await payments.sendBackPayout(second!.id, "account_closed")),
+    ]);
+
+    expect(await signalTitles(domain, admin)).toEqual([
+      "A second Payout sent back within 90 days: Sipho Dlamini",
+    ]);
+  });
+
   test("more than 90 days after the first raises nothing", async () => {
     const { domain, given, payments, clock } = await createHarness();
     const admin = await given.admin();

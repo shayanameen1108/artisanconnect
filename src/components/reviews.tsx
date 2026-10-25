@@ -45,7 +45,7 @@ export function ReviewList({
   empty: string;
 }) {
   const [pages, setPages] = useState<ReviewsShown[]>([first]);
-  const [busy, setBusy] = useState(false);
+  const action = useAction();
   const items = pages.flatMap((page) => page.items);
   const more = pages.at(-1)?.more ?? false;
   if (items.length === 0) return <p className="text-sm text-muted-foreground">{empty}</p>;
@@ -77,17 +77,20 @@ export function ReviewList({
         <Button
           variant="outline"
           size="sm"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            const next = await load(pages.length);
-            setBusy(false);
-            if (next) setPages((shown) => [...shown, next]);
-          }}
+          disabled={action.busy}
+          onClick={() =>
+            void action.run(
+              async () => ({ ok: true as const, value: await load(pages.length) }),
+              (next) => next && setPages((shown) => [...shown, next]),
+              undefined,
+              false,
+            )
+          }
         >
           {t.more}
         </Button>
       )}
+      <Refusal message={action.refusal} />
     </div>
   );
 }

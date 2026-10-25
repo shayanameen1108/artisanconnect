@@ -1,3 +1,5 @@
+import { copy } from "./copy";
+
 /**
  * What every command returns: the new state, or a typed refusal whose reason
  * the UI can show. A refusal changes nothing.
@@ -17,7 +19,7 @@ export function ok<T>(value: T): { ok: true; value: T } {
 
 /** The refusal of a command only an Admin may give. */
 export function adminOnly() {
-  return refuse("admin-only", "Only an Admin may do this.");
+  return refuse("admin-only", copy.refusals.adminOnly);
 }
 
 export function refuse<const Reason extends string>(

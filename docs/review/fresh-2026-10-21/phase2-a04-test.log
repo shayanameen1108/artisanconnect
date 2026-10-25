@@ -1,0 +1,11 @@
+
+ RUN  v5.0.5 /Users/sfx/Developer/artisanconnect
+
+Using secrets defined in .env
+Using secrets defined in .env
+
+ Test Files  2 passed (2)
+      Tests  67 passed (67)
+   Start at  00:30:49
+   Duration  13.65s (tests 82%, transform 14%, import 4%)
+
