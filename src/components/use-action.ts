@@ -33,7 +33,8 @@ export function useAction() {
       await then?.(result.value);
       if (invalidate) await router.invalidate();
       return true;
-    } catch {
+    } catch (error) {
+      console.error(error);
       setRefusal(copy.error.lead);
       await onRefusal?.(copy.error.lead);
       return false;
