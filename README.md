@@ -58,7 +58,7 @@ Every rule lives in `src/domain`, built from sections with exactly seven ports: 
 - **Queues** are the Admin's eight, each item kind declared with `defineQueueItemKind` (`src/domain/queues.ts`).
 - **Tells** are `notices` rows written with the event; their email goes after the commit, retried by the cron.
 
-Tests drive the module through `test/support/harness.ts`: real local D1 and R2, with a fake clock, content reader, payment adapter, and mailer.
+Tests drive the module through `tests/support/harness.ts`: real local D1 and R2, with a fake clock, content reader, payment adapter, and mailer.
 
 ## Deploying
 
