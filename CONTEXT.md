@@ -63,7 +63,7 @@ _Avoid_: Property type
 ### Finding an Artisan
 
 **Job**:
-A Client's request for work, which is Draft, Open, Expired, Closed, or Hired. It is never shown to a Visitor.
+A Client's request for work, which is Draft, Open, Expired, Closed, or Hired. An Expired Job may still be Hired from a Quote that is still Sent, without a Renew. It is never shown to a Visitor.
 _Avoid_: Lead, Project, Order, Booking
 
 **Invite-only Job**:
@@ -79,7 +79,7 @@ The offer of a Job to one Artisan in a Batch. The Artisan may Quote or pass.
 _Avoid_: Lead, Dispatch, Assignment
 
 **Invitation**:
-A Client's request to one Artisan to Quote on a Job. It reaches the Artisan even if they passed on a Job Match for it.
+A Client's request to one Artisan to Quote on a Job. It reaches the Artisan even if they passed on a Job Match for it. The Artisan may Quote or pass, and passing tells nobody: the Client may still write in their Conversation, which the Artisan no longer sees.
 _Avoid_: Lead, Direct hire
 
 **Available for Jobs**:
@@ -107,7 +107,7 @@ The Client's choice of a Sent Quote, made by paying for it. Other Sent Quotes on
 _Avoid_: Accept, Booking
 
 **Conversation**:
-The messages between one Client and one Artisan on one Job, opened by a Quote or an Invitation. The Admin may read it and not write in it. Before Payment it takes text and photos; after Payment also voice notes and PDFs; never video.
+The messages between one Client and one Artisan on one Job, opened by the first Quote Sent or the Invitation. The Admin may read it and not write in it. Before Payment it takes text and photos; after Payment also voice notes and PDFs; never video. It goes read-only once the Quote is Declined, Withdrawn, or Expired, or the Job closes; a delivered message is never changed or removed.
 _Avoid_: Chat, Inbox, DM
 
 ### Doing the work
@@ -166,6 +166,10 @@ _Avoid_: Service fee, Platform fee, Commission
 The platform's share of each Release, set at Hire: 10% if the Client Relationship has no Completed Engagement yet, 5% if it has one. It is never refunded.
 _Avoid_: Commission, Service fee
 
+**VAT number**:
+The number a VAT-registered Artisan states. Their Quotes carry it, and their amounts include VAT.
+_Avoid_: Tax number
+
 **Release**:
 Sending Materials or Labour to the Artisan, less the Artisan Fee.
 _Avoid_: Approve, Pay out
@@ -189,7 +193,7 @@ _Avoid_: Reversal
 ### Trust
 
 **Verification**:
-The Admin's acceptance of an Artisan's documents. Once: an identity document with a selfie holding it, a work permit if it is a foreign passport, and a Payout account. Per Service Category: three photos of their own work and any Credential that category needs.
+The Admin's acceptance of an Artisan's documents. Once: an identity document with a selfie holding it, a work permit if it is a foreign passport, and a Payout account. Per Service Category: three photos of their own work and any Credential that category needs. Documents may be photos or PDFs, at any time, because only the Admin sees them; a selfie and work photos are photos only.
 _Avoid_: Vetting, KYC
 
 **Credential**:
@@ -241,7 +245,7 @@ A signed-in Account's complaint about a Job, Quote, message, Artisan Profile, or
 _Avoid_: Ticket, Flag
 
 **Support request**:
-A signed-in Account's message to the Admin under a fixed topic, which the Admin answers by email. A suspended Account may send one.
+A signed-in Account's message to the Admin under a fixed topic, which the Admin answers by email. A suspended Account may send one. The platform also raises one itself, with a tag, for what only the Admin can settle, such as a failed Refund.
 _Avoid_: Ticket, Contact form
 
 **Data request**:

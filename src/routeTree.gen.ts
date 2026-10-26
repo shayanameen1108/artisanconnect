@@ -10,33 +10,427 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AccountRouteImport } from './routes/account'
+import { Route as ConfirmEmailRouteImport } from './routes/confirm-email'
+import { Route as HomeRouteImport } from './routes/home'
+import { Route as NoticesRouteImport } from './routes/notices'
+import { Route as PayoutsRouteImport } from './routes/payouts'
+import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as RecoverRouteImport } from './routes/recover'
+import { Route as RegionsRouteImport } from './routes/regions'
+import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
+import { Route as RulesRouteImport } from './routes/rules'
+import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
+import { Route as SupportRouteImport } from './routes/support'
+import { Route as VerificationRouteImport } from './routes/verification'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as AdminAdminsRouteImport } from './routes/admin/admins'
+import { Route as AdminAuditRouteImport } from './routes/admin/audit'
+import { Route as AdminSignInRouteImport } from './routes/admin/sign-in'
+import { Route as ArtisansIndexRouteImport } from './routes/artisans.index'
+import { Route as ArtisansArtisanIdRouteImport } from './routes/artisans.$artisanId'
+import { Route as DevMailRouteImport } from './routes/dev/mail'
+import { Route as JobPhotosPhotoIdRouteImport } from './routes/job-photos.$photoId'
+import { Route as JobsIndexRouteImport } from './routes/jobs.index'
+import { Route as JobsJobIdRouteImport } from './routes/jobs.$jobId'
+import { Route as JobsNewRouteImport } from './routes/jobs.new'
+import { Route as MessagePhotosPhotoIdRouteImport } from './routes/message-photos.$photoId'
+import { Route as ProfilePhotosPhotoIdRouteImport } from './routes/profile-photos.$photoId'
+import { Route as AdminFilesTokenRouteImport } from './routes/admin/files.$token'
+import { Route as AdminItemsItemIdRouteImport } from './routes/admin/items.$itemId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConfirmEmailRoute = ConfirmEmailRouteImport.update({
+  id: '/confirm-email',
+  path: '/confirm-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeRoute = HomeRouteImport.update({
+  id: '/home',
+  path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NoticesRoute = NoticesRouteImport.update({
+  id: '/notices',
+  path: '/notices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayoutsRoute = PayoutsRouteImport.update({
+  id: '/payouts',
+  path: '/payouts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RecoverRoute = RecoverRouteImport.update({
+  id: '/recover',
+  path: '/recover',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegionsRoute = RegionsRouteImport.update({
+  id: '/regions',
+  path: '/regions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RobotsDottxtRoute = RobotsDottxtRouteImport.update({
+  id: '/robots.txt',
+  path: '/robots.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RulesRoute = RulesRouteImport.update({
+  id: '/rules',
+  path: '/rules',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignInRoute = SignInRouteImport.update({
+  id: '/sign-in',
+  path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignUpRoute = SignUpRouteImport.update({
+  id: '/sign-up',
+  path: '/sign-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
+  id: '/sitemap.xml',
+  path: '/sitemap.xml',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupportRoute = SupportRouteImport.update({
+  id: '/support',
+  path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerificationRoute = VerificationRouteImport.update({
+  id: '/verification',
+  path: '/verification',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/admin/',
+  path: '/admin/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAdminsRoute = AdminAdminsRouteImport.update({
+  id: '/admin/admins',
+  path: '/admin/admins',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminAuditRoute = AdminAuditRouteImport.update({
+  id: '/admin/audit',
+  path: '/admin/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminSignInRoute = AdminSignInRouteImport.update({
+  id: '/admin/sign-in',
+  path: '/admin/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArtisansIndexRoute = ArtisansIndexRouteImport.update({
+  id: '/artisans/',
+  path: '/artisans/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ArtisansArtisanIdRoute = ArtisansArtisanIdRouteImport.update({
+  id: '/artisans/$artisanId',
+  path: '/artisans/$artisanId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevMailRoute = DevMailRouteImport.update({
+  id: '/dev/mail',
+  path: '/dev/mail',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobPhotosPhotoIdRoute = JobPhotosPhotoIdRouteImport.update({
+  id: '/job-photos/$photoId',
+  path: '/job-photos/$photoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsIndexRoute = JobsIndexRouteImport.update({
+  id: '/jobs/',
+  path: '/jobs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsJobIdRoute = JobsJobIdRouteImport.update({
+  id: '/jobs/$jobId',
+  path: '/jobs/$jobId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsNewRoute = JobsNewRouteImport.update({
+  id: '/jobs/new',
+  path: '/jobs/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MessagePhotosPhotoIdRoute = MessagePhotosPhotoIdRouteImport.update({
+  id: '/message-photos/$photoId',
+  path: '/message-photos/$photoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfilePhotosPhotoIdRoute = ProfilePhotosPhotoIdRouteImport.update({
+  id: '/profile-photos/$photoId',
+  path: '/profile-photos/$photoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminFilesTokenRoute = AdminFilesTokenRouteImport.update({
+  id: '/admin/files/$token',
+  path: '/admin/files/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminItemsItemIdRoute = AdminItemsItemIdRouteImport.update({
+  id: '/admin/items/$itemId',
+  path: '/admin/items/$itemId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/confirm-email': typeof ConfirmEmailRoute
+  '/home': typeof HomeRoute
+  '/notices': typeof NoticesRoute
+  '/payouts': typeof PayoutsRoute
+  '/profile': typeof ProfileRoute
+  '/recover': typeof RecoverRoute
+  '/regions': typeof RegionsRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/rules': typeof RulesRoute
+  '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
+  '/verification': typeof VerificationRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/sign-in': typeof AdminSignInRoute
+  '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
+  '/dev/mail': typeof DevMailRoute
+  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/new': typeof JobsNewRoute
+  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
+  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/admin/': typeof AdminIndexRoute
+  '/artisans/': typeof ArtisansIndexRoute
+  '/jobs/': typeof JobsIndexRoute
+  '/admin/files/$token': typeof AdminFilesTokenRoute
+  '/admin/items/$itemId': typeof AdminItemsItemIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/confirm-email': typeof ConfirmEmailRoute
+  '/home': typeof HomeRoute
+  '/notices': typeof NoticesRoute
+  '/payouts': typeof PayoutsRoute
+  '/profile': typeof ProfileRoute
+  '/recover': typeof RecoverRoute
+  '/regions': typeof RegionsRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/rules': typeof RulesRoute
+  '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
+  '/verification': typeof VerificationRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/sign-in': typeof AdminSignInRoute
+  '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
+  '/dev/mail': typeof DevMailRoute
+  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/new': typeof JobsNewRoute
+  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
+  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/admin': typeof AdminIndexRoute
+  '/artisans': typeof ArtisansIndexRoute
+  '/jobs': typeof JobsIndexRoute
+  '/admin/files/$token': typeof AdminFilesTokenRoute
+  '/admin/items/$itemId': typeof AdminItemsItemIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRoute
+  '/confirm-email': typeof ConfirmEmailRoute
+  '/home': typeof HomeRoute
+  '/notices': typeof NoticesRoute
+  '/payouts': typeof PayoutsRoute
+  '/profile': typeof ProfileRoute
+  '/recover': typeof RecoverRoute
+  '/regions': typeof RegionsRoute
+  '/robots.txt': typeof RobotsDottxtRoute
+  '/rules': typeof RulesRoute
+  '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
+  '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/support': typeof SupportRoute
+  '/verification': typeof VerificationRoute
+  '/admin/admins': typeof AdminAdminsRoute
+  '/admin/audit': typeof AdminAuditRoute
+  '/admin/sign-in': typeof AdminSignInRoute
+  '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
+  '/dev/mail': typeof DevMailRoute
+  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/jobs/$jobId': typeof JobsJobIdRoute
+  '/jobs/new': typeof JobsNewRoute
+  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
+  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/admin/': typeof AdminIndexRoute
+  '/artisans/': typeof ArtisansIndexRoute
+  '/jobs/': typeof JobsIndexRoute
+  '/admin/files/$token': typeof AdminFilesTokenRoute
+  '/admin/items/$itemId': typeof AdminItemsItemIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/account'
+    | '/confirm-email'
+    | '/home'
+    | '/notices'
+    | '/payouts'
+    | '/profile'
+    | '/recover'
+    | '/regions'
+    | '/robots.txt'
+    | '/rules'
+    | '/sign-in'
+    | '/sign-up'
+    | '/sitemap.xml'
+    | '/support'
+    | '/verification'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/sign-in'
+    | '/artisans/$artisanId'
+    | '/dev/mail'
+    | '/job-photos/$photoId'
+    | '/jobs/$jobId'
+    | '/jobs/new'
+    | '/message-photos/$photoId'
+    | '/profile-photos/$photoId'
+    | '/admin/'
+    | '/artisans/'
+    | '/jobs/'
+    | '/admin/files/$token'
+    | '/admin/items/$itemId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/account'
+    | '/confirm-email'
+    | '/home'
+    | '/notices'
+    | '/payouts'
+    | '/profile'
+    | '/recover'
+    | '/regions'
+    | '/robots.txt'
+    | '/rules'
+    | '/sign-in'
+    | '/sign-up'
+    | '/sitemap.xml'
+    | '/support'
+    | '/verification'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/sign-in'
+    | '/artisans/$artisanId'
+    | '/dev/mail'
+    | '/job-photos/$photoId'
+    | '/jobs/$jobId'
+    | '/jobs/new'
+    | '/message-photos/$photoId'
+    | '/profile-photos/$photoId'
+    | '/admin'
+    | '/artisans'
+    | '/jobs'
+    | '/admin/files/$token'
+    | '/admin/items/$itemId'
+  id:
+    | '__root__'
+    | '/'
+    | '/account'
+    | '/confirm-email'
+    | '/home'
+    | '/notices'
+    | '/payouts'
+    | '/profile'
+    | '/recover'
+    | '/regions'
+    | '/robots.txt'
+    | '/rules'
+    | '/sign-in'
+    | '/sign-up'
+    | '/sitemap.xml'
+    | '/support'
+    | '/verification'
+    | '/admin/admins'
+    | '/admin/audit'
+    | '/admin/sign-in'
+    | '/artisans/$artisanId'
+    | '/dev/mail'
+    | '/job-photos/$photoId'
+    | '/jobs/$jobId'
+    | '/jobs/new'
+    | '/message-photos/$photoId'
+    | '/profile-photos/$photoId'
+    | '/admin/'
+    | '/artisans/'
+    | '/jobs/'
+    | '/admin/files/$token'
+    | '/admin/items/$itemId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRoute
+  ConfirmEmailRoute: typeof ConfirmEmailRoute
+  HomeRoute: typeof HomeRoute
+  NoticesRoute: typeof NoticesRoute
+  PayoutsRoute: typeof PayoutsRoute
+  ProfileRoute: typeof ProfileRoute
+  RecoverRoute: typeof RecoverRoute
+  RegionsRoute: typeof RegionsRoute
+  RobotsDottxtRoute: typeof RobotsDottxtRoute
+  RulesRoute: typeof RulesRoute
+  SignInRoute: typeof SignInRoute
+  SignUpRoute: typeof SignUpRoute
+  SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  SupportRoute: typeof SupportRoute
+  VerificationRoute: typeof VerificationRoute
+  AdminAdminsRoute: typeof AdminAdminsRoute
+  AdminAuditRoute: typeof AdminAuditRoute
+  AdminSignInRoute: typeof AdminSignInRoute
+  ArtisansArtisanIdRoute: typeof ArtisansArtisanIdRoute
+  DevMailRoute: typeof DevMailRoute
+  JobPhotosPhotoIdRoute: typeof JobPhotosPhotoIdRoute
+  JobsJobIdRoute: typeof JobsJobIdRoute
+  JobsNewRoute: typeof JobsNewRoute
+  MessagePhotosPhotoIdRoute: typeof MessagePhotosPhotoIdRoute
+  ProfilePhotosPhotoIdRoute: typeof ProfilePhotosPhotoIdRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  ArtisansIndexRoute: typeof ArtisansIndexRoute
+  JobsIndexRoute: typeof JobsIndexRoute
+  AdminFilesTokenRoute: typeof AdminFilesTokenRoute
+  AdminItemsItemIdRoute: typeof AdminItemsItemIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +442,251 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/confirm-email': {
+      id: '/confirm-email'
+      path: '/confirm-email'
+      fullPath: '/confirm-email'
+      preLoaderRoute: typeof ConfirmEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home': {
+      id: '/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notices': {
+      id: '/notices'
+      path: '/notices'
+      fullPath: '/notices'
+      preLoaderRoute: typeof NoticesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payouts': {
+      id: '/payouts'
+      path: '/payouts'
+      fullPath: '/payouts'
+      preLoaderRoute: typeof PayoutsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/recover': {
+      id: '/recover'
+      path: '/recover'
+      fullPath: '/recover'
+      preLoaderRoute: typeof RecoverRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/regions': {
+      id: '/regions'
+      path: '/regions'
+      fullPath: '/regions'
+      preLoaderRoute: typeof RegionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/robots.txt': {
+      id: '/robots.txt'
+      path: '/robots.txt'
+      fullPath: '/robots.txt'
+      preLoaderRoute: typeof RobotsDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rules': {
+      id: '/rules'
+      path: '/rules'
+      fullPath: '/rules'
+      preLoaderRoute: typeof RulesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-in': {
+      id: '/sign-in'
+      path: '/sign-in'
+      fullPath: '/sign-in'
+      preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-up': {
+      id: '/sign-up'
+      path: '/sign-up'
+      fullPath: '/sign-up'
+      preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sitemap.xml': {
+      id: '/sitemap.xml'
+      path: '/sitemap.xml'
+      fullPath: '/sitemap.xml'
+      preLoaderRoute: typeof SitemapDotxmlRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/support': {
+      id: '/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof SupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verification': {
+      id: '/verification'
+      path: '/verification'
+      fullPath: '/verification'
+      preLoaderRoute: typeof VerificationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/admin'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/admins': {
+      id: '/admin/admins'
+      path: '/admin/admins'
+      fullPath: '/admin/admins'
+      preLoaderRoute: typeof AdminAdminsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/audit': {
+      id: '/admin/audit'
+      path: '/admin/audit'
+      fullPath: '/admin/audit'
+      preLoaderRoute: typeof AdminAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/sign-in': {
+      id: '/admin/sign-in'
+      path: '/admin/sign-in'
+      fullPath: '/admin/sign-in'
+      preLoaderRoute: typeof AdminSignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/artisans/': {
+      id: '/artisans/'
+      path: '/artisans'
+      fullPath: '/artisans/'
+      preLoaderRoute: typeof ArtisansIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/artisans/$artisanId': {
+      id: '/artisans/$artisanId'
+      path: '/artisans/$artisanId'
+      fullPath: '/artisans/$artisanId'
+      preLoaderRoute: typeof ArtisansArtisanIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dev/mail': {
+      id: '/dev/mail'
+      path: '/dev/mail'
+      fullPath: '/dev/mail'
+      preLoaderRoute: typeof DevMailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/job-photos/$photoId': {
+      id: '/job-photos/$photoId'
+      path: '/job-photos/$photoId'
+      fullPath: '/job-photos/$photoId'
+      preLoaderRoute: typeof JobPhotosPhotoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs/': {
+      id: '/jobs/'
+      path: '/jobs'
+      fullPath: '/jobs/'
+      preLoaderRoute: typeof JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs/$jobId': {
+      id: '/jobs/$jobId'
+      path: '/jobs/$jobId'
+      fullPath: '/jobs/$jobId'
+      preLoaderRoute: typeof JobsJobIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/jobs/new': {
+      id: '/jobs/new'
+      path: '/jobs/new'
+      fullPath: '/jobs/new'
+      preLoaderRoute: typeof JobsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/message-photos/$photoId': {
+      id: '/message-photos/$photoId'
+      path: '/message-photos/$photoId'
+      fullPath: '/message-photos/$photoId'
+      preLoaderRoute: typeof MessagePhotosPhotoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile-photos/$photoId': {
+      id: '/profile-photos/$photoId'
+      path: '/profile-photos/$photoId'
+      fullPath: '/profile-photos/$photoId'
+      preLoaderRoute: typeof ProfilePhotosPhotoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/files/$token': {
+      id: '/admin/files/$token'
+      path: '/admin/files/$token'
+      fullPath: '/admin/files/$token'
+      preLoaderRoute: typeof AdminFilesTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/items/$itemId': {
+      id: '/admin/items/$itemId'
+      path: '/admin/items/$itemId'
+      fullPath: '/admin/items/$itemId'
+      preLoaderRoute: typeof AdminItemsItemIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRoute,
+  ConfirmEmailRoute: ConfirmEmailRoute,
+  HomeRoute: HomeRoute,
+  NoticesRoute: NoticesRoute,
+  PayoutsRoute: PayoutsRoute,
+  ProfileRoute: ProfileRoute,
+  RecoverRoute: RecoverRoute,
+  RegionsRoute: RegionsRoute,
+  RobotsDottxtRoute: RobotsDottxtRoute,
+  RulesRoute: RulesRoute,
+  SignInRoute: SignInRoute,
+  SignUpRoute: SignUpRoute,
+  SitemapDotxmlRoute: SitemapDotxmlRoute,
+  SupportRoute: SupportRoute,
+  VerificationRoute: VerificationRoute,
+  AdminAdminsRoute: AdminAdminsRoute,
+  AdminAuditRoute: AdminAuditRoute,
+  AdminSignInRoute: AdminSignInRoute,
+  ArtisansArtisanIdRoute: ArtisansArtisanIdRoute,
+  DevMailRoute: DevMailRoute,
+  JobPhotosPhotoIdRoute: JobPhotosPhotoIdRoute,
+  JobsJobIdRoute: JobsJobIdRoute,
+  JobsNewRoute: JobsNewRoute,
+  MessagePhotosPhotoIdRoute: MessagePhotosPhotoIdRoute,
+  ProfilePhotosPhotoIdRoute: ProfilePhotosPhotoIdRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  ArtisansIndexRoute: ArtisansIndexRoute,
+  JobsIndexRoute: JobsIndexRoute,
+  AdminFilesTokenRoute: AdminFilesTokenRoute,
+  AdminItemsItemIdRoute: AdminItemsItemIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
