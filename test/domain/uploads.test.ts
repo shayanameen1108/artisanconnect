@@ -24,7 +24,7 @@ import {
   webmOpus,
 } from "../support/files";
 import { createHarness } from "../support/harness";
-import { textPdf } from "../support/pdfs";
+import { readPdfAs, textPdf } from "../support/pdfs";
 
 // What a file sent with a message may be (#113): before Payment photos only;
 // after it in the Engagement's Conversation, PDFs and voice notes too; never
@@ -59,7 +59,7 @@ async function conversation(payment: "before" | "after") {
       (item) => item.kind === "message",
     );
   }
-  return { domain, client, send, messages };
+  return { domain, client, send, messages, given };
 }
 
 /** Sends each file in its own message, and gives the refusal reason of each, or "sent". */
@@ -181,6 +181,19 @@ describe("a PDF", () => {
       ],
       sent: 4,
     });
+  });
+
+  test("a conversion that gives no pages Holds the send for the Admin: nothing unread goes out", async () => {
+    const { domain, send, messages, given } = await conversation("after");
+    const pdf = await textPdf({ lines: ["Confirmation of banking details"] });
+    readPdfAs(pdf, []);
+
+    const sent = await send(pdf);
+
+    expect(sent).toMatchObject({ ok: true, value: { state: "held" } });
+    expect(await messages()).toMatchObject([{ kind: "message", state: "held" }]);
+    const admin = await given.admin();
+    expect((await domain.queues.home(admin.actor, { queue: "pre-checks" }))?.items).not.toEqual([]);
   });
 });
 

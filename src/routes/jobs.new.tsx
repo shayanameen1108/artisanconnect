@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent } from "@/components/ui/card";
 import { DraftForm } from "@/components/job-form";
 import { Page } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { copy, pageTitle } from "@/web/copy";
 import { onlyFor } from "@/web/guards";
 import { postJob, saveJobDraft } from "@/web/jobs";
@@ -23,24 +23,22 @@ const t = copy.job;
  */
 function NewJob() {
   const navigate = useNavigate();
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
 
   async function save(form: FormData, post: boolean) {
-    setBusy(true);
-    setRefusal(null);
-    const saved = await saveJobDraft({ data: form });
-    if (!saved.ok) {
-      setBusy(false);
-      return setRefusal(saved.refusal.message);
-    }
-    const { jobId } = saved.value;
-    const posted = post ? await postJob({ data: { jobId } }) : null;
-    await navigate({
-      to: "/jobs/$jobId",
-      params: { jobId },
-      state: posted && !posted.ok ? { postRefusal: posted.refusal.message } : {},
-    });
+    await action.run(
+      () => saveJobDraft({ data: form }),
+      async ({ jobId }) => {
+        const posted = post ? await postJob({ data: { jobId } }) : null;
+        await navigate({
+          to: "/jobs/$jobId",
+          params: { jobId },
+          state: posted && !posted.ok ? { postRefusal: posted.refusal.message } : {},
+        });
+      },
+      undefined,
+      false,
+    );
   }
 
   return (
@@ -54,8 +52,8 @@ function NewJob() {
         <CardContent>
           <DraftForm
             job={null}
-            busy={busy}
-            refusal={refusal}
+            busy={action.busy}
+            refusal={action.refusal}
             onSave={(form) => void save(form, false)}
             onPost={(form) => void save(form, true)}
           />

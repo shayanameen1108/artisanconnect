@@ -1,0 +1,45 @@
+
+ RUN  v5.0.5 /Users/sfx/Developer/artisanconnect
+
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+Using secrets defined in .env
+
+ Test Files  36 passed (36)
+      Tests  925 passed (925)
+   Start at  02:38:52
+   Duration  111.24s (tests 85%, transform 10%, import 5%)
+

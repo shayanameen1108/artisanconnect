@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { MapPin, UserSearch } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Choose } from "@/components/choose";
 import { Pager } from "@/components/pager";
 import { EmptyState, Refusal } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { copy } from "@/web/copy";
 import { getInviteList, inviteArtisan } from "@/web/invitations";
 
@@ -41,22 +42,15 @@ export function InviteList({
   hireAgain: string | null;
   list: InviteListView;
 }) {
-  const router = useRouter();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(list.artisans.length / PER_PAGE));
   const shownPage = Math.min(page, pageCount);
   const onPage = list.artisans.slice((shownPage - 1) * PER_PAGE, shownPage * PER_PAGE);
 
   async function invite(artisanId: string) {
-    setBusy(artisanId);
-    setRefusal(null);
-    const result = await inviteArtisan({ data: { jobId, artisanId } });
-    if (!result.ok) setRefusal(result.refusal.message);
-    await router.invalidate();
-    setBusy(null);
+    await action.run(() => inviteArtisan({ data: { jobId, artisanId } }));
   }
 
   return (
@@ -90,7 +84,7 @@ export function InviteList({
             />
           </Field>
         )}
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
         {list.artisans.length === 0 ? (
           <EmptyState icon={<UserSearch />}>
             {hireAgain ? t.emptyHireAgain(hireAgain) : t.empty}
@@ -123,7 +117,7 @@ export function InviteList({
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy !== null}
+                    disabled={action.busy}
                     onClick={() => void invite(artisan.artisanId)}
                   >
                     {t.invite}

@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Page, Refusal, withSidebar } from "@/components/page";
+import { useAction, type Outcome } from "@/components/use-action";
 import { formatRands } from "@/domain/shared/money";
 import { copy, formatDate, pageTitle } from "@/web/copy";
 import { onlyForAdmins } from "@/web/guards";
@@ -75,30 +76,27 @@ function Person() {
 }
 
 function Actions({ person }: { person: Person }) {
-  const router = useRouter();
   const [act, setAct] = useState<Act | null>(null);
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
   const acts: Act[] = person.suspended ? ["warn", "lift"] : ["warn", "suspend"];
 
   async function record() {
     if (!act) return;
-    setBusy(true);
-    setRefusal(null);
     const data = { accountId: person.accountId, reason };
-    const result =
-      act === "warn"
-        ? await warnPerson({ data })
-        : act === "suspend"
-          ? await suspendPerson({ data })
-          : await liftSuspension({ data });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    toast.success(t.done[act]);
-    setAct(null);
-    setReason("");
-    await router.invalidate();
+    await action.run(
+      (): Promise<Outcome> =>
+        act === "warn"
+          ? warnPerson({ data })
+          : act === "suspend"
+            ? suspendPerson({ data })
+            : liftSuspension({ data }),
+      () => {
+        toast.success(t.done[act]);
+        setAct(null);
+        setReason("");
+      },
+    );
   }
 
   return (
@@ -135,10 +133,10 @@ function Actions({ person }: { person: Person }) {
             <p className="text-xs text-muted-foreground">{t.told[act]}</p>
           </div>
         )}
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
         {act && (
           <Button
-            disabled={busy || (act !== "lift" && !reason.trim())}
+            disabled={action.busy || (act !== "lift" && !reason.trim())}
             onClick={() => void record()}
           >
             {t.record}
@@ -174,18 +172,11 @@ function History({ person }: { person: Person }) {
 }
 
 function PayoutsCard({ person }: { person: Person }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
 
   async function toggle() {
-    setBusy(true);
-    setRefusal(null);
     const change = person.payoutsHeld ? liftPayoutHold : holdPayouts;
-    const result = await change({ data: { artisanId: person.accountId } });
-    if (!result.ok) setRefusal(result.refusal.message);
-    await router.invalidate();
-    setBusy(false);
+    await action.run((): Promise<Outcome> => change({ data: { artisanId: person.accountId } }));
   }
 
   return (
@@ -196,7 +187,7 @@ function PayoutsCard({ person }: { person: Person }) {
       <CardContent className="space-y-3">
         <p className="text-sm">{person.payoutsHeld ? t.payoutsHeldLead : t.payoutsFreeLead}</p>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => void toggle()}>
+          <Button variant="outline" size="sm" disabled={action.busy} onClick={() => void toggle()}>
             {person.payoutsHeld ? copy.admin.payouts.lift : copy.admin.payouts.hold}
           </Button>
           <Link
@@ -207,7 +198,7 @@ function PayoutsCard({ person }: { person: Person }) {
             {copy.admin.payouts.history}
           </Link>
         </div>
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
       </CardContent>
     </Card>
   );

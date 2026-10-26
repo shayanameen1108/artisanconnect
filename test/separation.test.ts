@@ -128,6 +128,17 @@ const cronSource = Object.values(
 ).join("\n");
 
 describe("the code", () => {
+  test("keeps the domain able to be read by web, but never the other way", () => {
+    const offenders = Object.entries(sources)
+      .filter(
+        ([path, text]) =>
+          path.startsWith("../src/domain/") &&
+          /from\s+"(?:@\/web\/|\.{1,2}\/[^"]*\bweb\/)/.test(text),
+      )
+      .map(([path]) => path);
+    expect(offenders).toEqual([]);
+  });
+
   test("reaches no host but Cloudflare's own", () => {
     const hosts = new Set(
       Object.values(sources).flatMap((text) =>

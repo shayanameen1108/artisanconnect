@@ -19,6 +19,7 @@ import {
 import { accountSidebar, quoteBlocks } from "../quotes/held";
 import { quoteRow } from "../quotes/rows";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { formatTime } from "../shared/sa-days";
 import { accounts, jobs, reports } from "../schema";
 import {
@@ -61,7 +62,7 @@ const TOLD = "The Account reported, with the reason";
 
 /** The decisions every Report's item may have, in the order offered. */
 const DECISIONS = {
-  dismiss: { label: "Dismiss", told: "Nobody", reason: "optional", reasonLabel: "Note" },
+  dismiss: { label: "Dismiss", told: copy.told.nobody, reason: "optional", reasonLabel: "Note" },
   warn: { label: "Warn", told: TOLD, reason: "required" },
   suspend: { label: "Suspend", told: TOLD, reason: "required" },
   "leaving-warn": { label: "Leaving: warn", told: TOLD, reason: "required" },

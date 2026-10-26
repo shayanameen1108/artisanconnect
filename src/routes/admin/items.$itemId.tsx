@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Blocks, QueueCounts } from "@/components/admin";
 import { Page, Refusal, withSidebar } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { formatRands } from "@/domain/shared/money";
 import { splitOf } from "@/domain/shared/queue-names";
 import type { Block, DecisionField, ItemRow } from "@/domain/queues";
@@ -134,14 +135,12 @@ function QueueItemPage() {
 
 /** The highlighted card: only the decisions allowed now, each saying who is told. */
 function DecisionCard({ item }: { item: Item }) {
-  const router = useRouter();
   // The only decision allowed is chosen already, as one less click.
   const only = item.decisions.length === 1 ? item.decisions[0]! : null;
   const [chosen, setChosen] = useState<string | null>(only?.key ?? null);
   const [reason, setReason] = useState("");
   const [fields, setFields] = useState<Record<string, string>>(() => defaultsOf(only));
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
   const option = item.decisions.find((decision) => decision.key === chosen);
 
   function choose(key: string) {
@@ -151,22 +150,19 @@ function DecisionCard({ item }: { item: Item }) {
 
   async function record() {
     if (!option) return;
-    setBusy(true);
-    setRefusal(null);
     const wholes = option.fields.flatMap((field) =>
       field.type === "split" ? [[splitOf(field.key), String(field.totalCents)]] : [],
     );
-    const result = await decideQueueItem({
-      data: {
-        itemId: item.id,
-        decision: option.key,
-        reason,
-        fields: { ...fields, ...Object.fromEntries(wholes) },
-      },
-    });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    await router.invalidate();
+    await action.run(() =>
+      decideQueueItem({
+        data: {
+          itemId: item.id,
+          decision: option.key,
+          reason,
+          fields: { ...fields, ...Object.fromEntries(wholes) },
+        },
+      }),
+    );
   }
 
   return (
@@ -219,14 +215,14 @@ function DecisionCard({ item }: { item: Item }) {
           {option && `${t.told(option.told)} `}
           {t.final}
         </p>
-        <Refusal message={refusal} />
+        <Refusal message={action.refusal} />
       </CardContent>
       {item.decisions.length > 0 && (
         <CardFooter>
           <Button
             size="lg"
             disabled={
-              busy ||
+              action.busy ||
               !option ||
               (option.reason === "required" && !reason.trim()) ||
               option.fields.some((field) => field.required && !fields[field.key]?.trim())
@@ -297,32 +293,30 @@ function RowsCard({
 }
 
 function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
-  const router = useRouter();
+  const action = useAction();
   const [chosen, setChosen] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
   const option = row.decisions.find((decision) => decision.key === chosen);
 
   function choose(key: string) {
     setChosen(key);
-    setRefusal(null);
+    action.setRefusal(null);
     setFields(defaultsOf(row.decisions.find((each) => each.key === key)));
   }
 
   async function record() {
     if (!option) return;
-    setBusy(true);
-    setRefusal(null);
-    const result = await decideQueueRow({
-      data: { itemId, rowId: row.id, decision: option.key, reason, fields },
-    });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    setChosen(null);
-    setReason("");
-    await router.invalidate();
+    await action.run(
+      () =>
+        decideQueueRow({
+          data: { itemId, rowId: row.id, decision: option.key, reason, fields },
+        }),
+      () => {
+        setChosen(null);
+        setReason("");
+      },
+    );
   }
 
   const missing =
@@ -393,9 +387,9 @@ function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
               {t.told(option.told)} {t.final}
             </p>
           )}
-          <Refusal message={refusal} />
+          <Refusal message={action.refusal} />
           {option && (
-            <Button size="sm" disabled={busy || missing} onClick={() => void record()}>
+            <Button size="sm" disabled={action.busy || missing} onClick={() => void record()}>
               {t.record}
             </Button>
           )}
@@ -494,16 +488,15 @@ function LoggedRead({
   label: string;
 }) {
   const [opened, setOpened] = useState<{ blocks: Block[]; at: Date } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
 
   async function open() {
-    setBusy(true);
-    setRefusal(null);
-    const result = await openLoggedRead({ data: { itemId, read, rowId } });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    setOpened({ blocks: result.value, at: new Date() });
+    await action.run(
+      () => openLoggedRead({ data: { itemId, read, rowId } }),
+      (blocks) => setOpened({ blocks, at: new Date() }),
+      undefined,
+      false,
+    );
   }
 
   if (opened) {
@@ -516,13 +509,13 @@ function LoggedRead({
   }
   return (
     <div className="space-y-2">
-      <Button variant="outline" size="sm" disabled={busy} onClick={() => void open()}>
+      <Button variant="outline" size="sm" disabled={action.busy} onClick={() => void open()}>
         <Eye />
         {t.openRead(label)}
         <span className="text-muted-foreground">{t.logged}</span>
       </Button>
       <p className="text-xs text-muted-foreground">{t.loggedNote}</p>
-      <Refusal message={refusal} />
+      <Refusal message={action.refusal} />
     </div>
   );
 }

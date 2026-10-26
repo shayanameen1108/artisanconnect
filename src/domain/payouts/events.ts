@@ -8,7 +8,7 @@ import { formatRands } from "../shared/money";
 import type { PaymentEvent } from "../ports";
 import { DAY_MS, formatDay, saDay } from "../shared/sa-days";
 import { ledgerEntries, payouts, verificationChecks } from "../schema";
-import { sentBackSignalWrites } from "../signals";
+import { signalIfSentBack } from "../signals";
 import { raiseSupportRequest } from "../support";
 import { emailTells, tellWhile, tellWithEmailWhile } from "../tells";
 import { currentPayoutAccount } from "../verification";
@@ -261,11 +261,6 @@ export async function payoutStopped(
     const verb = stop.to === "refused" ? "refused" : "sent back";
     const amount = formatRands(payout.amountCents);
     const stopsAccount = current?.id === payout.payoutAccountId;
-    // A second send-back within 90 days raises a Signal (#140), with the send-back.
-    const signal =
-      stop.to === "sent-back"
-        ? await sentBackSignalWrites(ctx, payout, stop.reason, stoppedNow)
-        : [];
     await ctx.commit([
       ctx.db
         .update(payouts)
@@ -314,7 +309,6 @@ export async function payoutStopped(
         },
         stoppedNow,
       ),
-      ...signal,
     ]);
     const [moved] = await ctx.db
       .select({ one: sql`1` })
@@ -323,6 +317,9 @@ export async function payoutStopped(
         and(eq(payouts.id, payout.id), eq(payouts.state, stop.to), eq(payouts.stoppedAt, now)),
       );
     if (moved) {
+      // A second send-back within 90 days raises a Signal (#140); detecting
+      // after this commit, the other of two handled together is already in.
+      if (stop.to === "sent-back") await signalIfSentBack(ctx, payout);
       await emailTells(ctx).catch((error: unknown) => {
         console.error("Tell emails did not go", error);
       });

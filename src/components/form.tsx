@@ -24,6 +24,7 @@ import {
   InputGroupText,
 } from "@/components/ui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Refusal } from "@/components/page";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { EMAIL_CODE } from "@/domain/accounts/inputs";
@@ -293,18 +294,23 @@ type Issue = { path: PropertyKey[]; message: string };
 function Form(props: Omit<ComponentProps<"form">, "onSubmit">) {
   const form = useFormContext();
   return (
-    <form
-      {...props}
-      onSubmit={async (event) => {
-        event.preventDefault();
-        const element = event.currentTarget;
-        await form.handleSubmit();
-        if (form.state.isValid) return;
-        requestAnimationFrame(() =>
-          element.querySelector<HTMLElement>("[aria-invalid=true]")?.focus(),
-        );
-      }}
-    />
+    <>
+      <form
+        {...props}
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const element = event.currentTarget;
+          await form.handleSubmit();
+          if (form.state.isValid) return;
+          requestAnimationFrame(() =>
+            element.querySelector<HTMLElement>("[aria-invalid=true]")?.focus(),
+          );
+        }}
+      />
+      <form.Subscribe selector={(state) => state.errorMap.onSubmit}>
+        {(error) => <Refusal message={error ? copy.error.lead : null} />}
+      </form.Subscribe>
+    </>
   );
 }
 

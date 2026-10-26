@@ -79,4 +79,4 @@ vp run admin:setup you@example.com --env staging
 
 ## UI
 
-shadcn/ui is set up as **base-nova** (`components.json`); its packages stay at the versions shadcn's components ask for, so recharts is pinned at the 3.8.0 its chart names. Add a component with `vp exec shadcn add <name>` (the installed CLI, not `@latest`); when its CLI cannot install dependencies, add them with `vp add <package>`. Forms are TanStack Form on shadcn's Field (`src/components/form.tsx`); pages load through route loaders and reload after each action.
+shadcn/ui is set up as **base-nova** (`components.json`); its packages stay at the versions shadcn's components ask for, so recharts is pinned at 3.10.1, the version its chart asks for. Add a component with `vp exec shadcn add <name>` (the installed CLI, not `@latest`); when its CLI cannot install dependencies, add them with `vp add <package>`. Forms are TanStack Form on shadcn's Field (`src/components/form.tsx`); pages load through route loaders and reload after each action.

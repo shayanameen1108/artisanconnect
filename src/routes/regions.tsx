@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Page, Refusal } from "@/components/page";
+import { useAction } from "@/components/use-action";
 import { REGIONS_MAX } from "@/domain/shared/places";
 import { cn } from "@/lib/utils";
 import { copy, pageTitle } from "@/web/copy";
@@ -29,11 +30,9 @@ const t = copy.regions;
 /** The Artisan chooses one to three Regions, each opening to its suburbs. */
 function Regions() {
   const { regions, chosen: saved } = Route.useLoaderData();
-  const router = useRouter();
   const [chosen, setChosen] = useState<string[]>(saved);
   const [open, setOpen] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const action = useAction();
   const full = chosen.length >= REGIONS_MAX;
   const unchanged = chosen.length === saved.length && chosen.every((id) => saved.includes(id));
 
@@ -42,13 +41,10 @@ function Regions() {
   }
 
   async function save() {
-    setBusy(true);
-    setRefusal(null);
-    const result = await chooseRegions({ data: { regionIds: chosen } });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    toast.success(t.saved);
-    await router.invalidate();
+    await action.run(
+      () => chooseRegions({ data: { regionIds: chosen } }),
+      () => toast.success(t.saved),
+    );
   }
 
   return (
@@ -106,14 +102,17 @@ function Regions() {
         </CardContent>
       </Card>
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={busy || chosen.length === 0 || unchanged} onClick={() => void save()}>
+        <Button
+          disabled={action.busy || chosen.length === 0 || unchanged}
+          onClick={() => void save()}
+        >
           {t.save}
         </Button>
         <span className="text-sm text-muted-foreground">
           {t.chosen(chosen.length, REGIONS_MAX)}
         </span>
       </div>
-      <Refusal message={refusal} />
+      <Refusal message={action.refusal} />
       <FindSuburb />
     </Page>
   );

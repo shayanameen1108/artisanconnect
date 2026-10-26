@@ -24,6 +24,7 @@ import { defineQueueItemKind, type Block, type DecisionField } from "../queues";
 import { accountSidebar } from "../quotes/held";
 import { refundWrites, sendEngagementRefunds } from "../refunds";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { formatTime } from "../shared/sa-days";
 import { completions, disputes, engagements, queueItems, type DISPUTED_BY } from "../schema";
 import { signalIfDisputing } from "../signals";
@@ -544,16 +545,16 @@ export const disputeItem = defineQueueItemKind("dispute", {
   decisions: {
     split: {
       label: "Split the held amount",
-      told: "Both parties, with the reason",
+      told: copy.told.bothPartiesWithReason,
       reason: "required",
       reasonLabel: "Reason, for both parties",
     },
     // Recorded when the parties settle it, never offered to the Admin.
-    [SETTLED]: { label: "Settled by the parties", told: "Both parties", reason: "none" },
+    [SETTLED]: { label: "Settled by the parties", told: copy.told.bothParties, reason: "none" },
     // Recorded when the Admin's decision of a Chargeback decides what it held (#137), never offered.
     [CHARGEBACK_DECIDED]: {
       label: "Decided with the Chargeback",
-      told: "Both parties",
+      told: copy.told.bothParties,
       reason: "none",
     },
   },

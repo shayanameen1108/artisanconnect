@@ -5,6 +5,7 @@ import { accountIdOf, visitor, type AccountActor, type Actor } from "../shared/a
 import { tryWithin } from "../rate-limits";
 import { recordSighting, type Seen } from "../signals";
 import { ok, refuse } from "../shared/result";
+import { copy } from "../shared/copy";
 import { adminActorFor } from "../admins/identity";
 import { alreadyChecked, isAlreadyDecided } from "../content/held";
 import { causedBy } from "../errors";
@@ -126,7 +127,7 @@ export const accountsSection = defineSection({
           await hashPassword(details.password);
           await ctx.ports.mailer.send({
             to: details.email,
-            subject: "Someone tried to sign up with your Email",
+            subject: copy.email.signUpTried,
             text: [
               "Someone tried to sign up for ArtisanConnect with this Email. It already holds an Account, so no new one was made.",
               `If it was you, sign in: ${new URL("/sign-in", ctx.config.appUrl).href}`,
