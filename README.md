@@ -17,7 +17,7 @@ Each thing is written down once:
 
 ## Setup
 
-[Vite+](https://viteplus.dev) (`vp`) runs everything: it uses the Node in `.node-version` and the pnpm in `package.json`, and ships Vite, Vitest, Oxlint, and Oxfmt as one set, pinned in `pnpm-workspace.yaml`. `vp install` also sets up the pre-commit hook, which checks what is staged. `postinstall` runs `void prepare` for Void codegen. Run Void's own commands through `vp exec void ...`; its docs ship in `node_modules/void/docs/` (start with `guide/quickstart.md` and `reference/cli.md`). Dependencies track the versions vetted across the four sibling projects rather than latest tags. Better Auth stays on its existing schema-compatible version; auth upgrades require a separate migration review.
+[Vite+](https://viteplus.dev) (`vp`) runs everything: it uses the Node in `.node-version` and the pnpm in `package.json`, and ships Vite, Vitest, Oxlint, and Oxfmt as one set, pinned in `pnpm-workspace.yaml`. `vp install` also sets up the pre-commit hook, which checks what is staged. `postinstall` runs `void prepare` for Void codegen. Run Void's own commands through `vp exec void ...`; its docs ship in `node_modules/void/docs/` (start with `guide/quickstart.md` and `reference/cli.md`). Dependencies pin known-good versions rather than tracking latest tags. Better Auth stays on its existing schema-compatible version; auth upgrades require a separate migration review.
 
 ```sh
 curl -fsSL https://vite.plus | bash   # once per machine

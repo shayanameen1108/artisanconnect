@@ -30,8 +30,8 @@ jobs:
           sed -i "s|^BETTER_AUTH_SECRET=.*|BETTER_AUTH_SECRET=$(openssl rand -base64 32)|" .env
           sed -i "s|^PAYMENTS_WEBHOOK_SECRET=.*|PAYMENTS_WEBHOOK_SECRET=$(openssl rand -base64 32)|" .env
       # Workers AI is remote:true, so the dev server needs a Cloudflare token
-      # for the remote proxy (same as vektor). Playwright's own server on Linux
-      # never exits, so the step would hang.
+      # for the remote proxy. Playwright's own server on Linux never exits,
+      # so the step would hang.
       - run: |
           vp run db:migrate:local
           nohup vp dev > dev-server.log 2>&1 &
