@@ -1,9 +1,11 @@
 import { useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Fact } from "@/components/job-details";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,24 +16,34 @@ import {
   CERTIFICATES,
   COMPLETION_DOCUMENTS_MAX,
   COMPLETION_PHOTOS_MAX,
+  DISPUTE_PHOTOS_MAX,
+  DISPUTE_REASON_MAX,
+  labourAmount,
   NOTE_MAX,
   refundFields,
+  updatedQuoteFields,
 } from "@/domain/engagements/inputs";
-import { formatRands } from "@/domain/money";
+import { formatRands, PROTECTION_FEE_PERCENT } from "@/domain/money";
 import { formatDay } from "@/domain/sa-days";
 import { copy, formatDate } from "@/web/copy";
 import {
+  acceptUpdatedQuote,
   answerNotStarted,
   approveCompletion,
   cancelEngagement,
   claimStarted,
   markComplete,
   markWorkStarted,
+  openDispute,
+  proposeUpdatedQuote,
   refund,
+  rejectUpdatedQuote,
+  releaseHeld,
   requestFix,
   withdrawCompletion,
+  withdrawUpdatedQuote,
 } from "@/web/engagements";
-import type { getJob } from "@/web/jobs";
+import { hireAgain, type getJob } from "@/web/jobs";
 import { shrinkPhoto } from "@/web/shrink-photo";
 
 // The Job page once a Quote is Hired (#107, #126): the next step, with what
@@ -39,8 +51,10 @@ import { shrinkPhoto } from "@/web/shrink-photo";
 // and Fix requests (#130), and either party's Cancellation (#133), the
 // Completion itself, the Payments card with Materials and Labour as two
 // numbered payments and the bar to Approval by silence, the Refunds and the
-// Artisan's Refund form (#132), the Activity, and in the sidebar the Money
-// and the Hired Quote's dates. The Client never
+// Artisan's Refund form (#132), the Updated Quote (#134), the Dispute and
+// what each party may do about it (#135), a Chargeback's freeze and its
+// decision (#137), the Activity, and in the sidebar
+// the Money and the Hired Quote's dates. The Client never
 // sees the Artisan Fee; the Artisan never sees the Protection Fee.
 
 type JobView = Awaited<ReturnType<typeof getJob>>;
@@ -69,8 +83,26 @@ export function EngagementNextStep({
   );
 }
 
-/** The Next step's title and lead, by the Engagement's state. */
+/** The Next step's title and lead, by the Engagement's state, or its Chargeback's. */
 function nextStep(engagement: Engagement, asClient: boolean): [string, string] {
+  const { chargeback } = engagement;
+  if (chargeback?.frozen) {
+    return [t.chargeback.frozenTitle, t.chargeback.frozenLead(asClient)];
+  }
+  if (chargeback?.decision) {
+    const { releasedCents, chargedBackCents, refundedCents, reason } = chargeback.decision;
+    return [
+      t.chargeback.decidedTitle,
+      t.chargeback.decidedLead({
+        asClient,
+        released: formatRands(releasedCents),
+        chargedBack: chargedBackCents > 0 ? formatRands(chargedBackCents) : null,
+        refunded: refundedCents > 0 ? formatRands(refundedCents) : null,
+        back: formatRands(chargedBackCents + refundedCents),
+        reason,
+      }),
+    ];
+  }
   switch (engagement.state) {
     case "work-started":
       return [t.workStarted, asClient ? t.workStartedClientLead : t.workStartedArtisanLead];
@@ -82,6 +114,18 @@ function nextStep(engagement: Engagement, asClient: boolean): [string, string] {
     }
     case "fix-requested":
       return asClient ? [t.fixClient, t.fixClientLead] : [t.fixArtisan, t.fixArtisanLead];
+    case "disputed": {
+      const { dispute } = engagement;
+      if (!dispute) break;
+      return [
+        t.dispute.title,
+        t.dispute.lead({
+          own: (dispute.by === "client") === asClient,
+          asClient,
+          held: formatRands(dispute.heldCents),
+        }),
+      ];
+    }
     case "completed":
       return [t.completedTitle, asClient ? t.completedClientLead : t.completedArtisanLead];
     case "cancelled": {
@@ -128,7 +172,7 @@ export function StartActions({
   asClient: boolean;
 }) {
   const action = useAction();
-  if (engagement.state !== "paid") return null;
+  if (engagement.state !== "paid" || engagement.chargeback?.frozen) return null;
   const { engagementId } = engagement;
   const materials = engagement.money.payments.find((each) => each.part === "materials");
   return (
@@ -206,7 +250,8 @@ export function CompletionActions({
         <FixRequestNote fixRequest={engagement.fixRequest} asClient={asClient} />
       )}
       {asClient
-        ? engagement.state === "awaiting-approval" && <ApproveOrFix engagement={engagement} />
+        ? engagement.state === "awaiting-approval" &&
+          !engagement.chargeback?.frozen && <ApproveOrFix engagement={engagement} />
         : "canComplete" in engagement && (
             <>
               {engagement.completionCheck && (
@@ -284,6 +329,586 @@ export function CancelAction({
         </Button>
         <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
           {t.keepJob}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Hire Again (#139, ADR 0013): the Client opens a Draft of an Invite-only
+ * Job, filled in from this Completed Engagement, inviting only its Artisan.
+ */
+export function HireAgainAction({ engagement }: { engagement: ClientEngagement }) {
+  const action = useAction();
+  const navigate = useNavigate();
+  if (!engagement.hireAgain) return null;
+  const { engagementId } = engagement;
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">{t.hireAgainLead}</p>
+      <Refusal message={action.refusal} />
+      <Button
+        disabled={action.busy}
+        onClick={() =>
+          void action.run(async () => {
+            const again = await hireAgain({ data: { engagementId } });
+            if (again.ok) {
+              await navigate({ to: "/jobs/$jobId", params: { jobId: again.value.jobId } });
+            }
+            return again;
+          })
+        }
+      >
+        {t.hireAgain}
+      </Button>
+    </div>
+  );
+}
+
+const d = t.dispute;
+
+/**
+ * What the viewer may do about a Dispute (#135): the Client disputes part of
+ * the Labour while a Completion awaits them, then may release what is held
+ * or approve the rest; the Artisan disputes all the Labour not yet released
+ * against a Fix request or within a Cancellation's 72 hours.
+ */
+export function DisputeActions({
+  engagement,
+  asClient,
+}: {
+  engagement: Engagement;
+  asClient: boolean;
+}) {
+  return (
+    <>
+      {engagement.disputable && (
+        <DisputeForm
+          engagementId={engagement.engagementId}
+          asClient={asClient}
+          labourCents={engagement.disputable.labourCents}
+          until={"until" in engagement.disputable ? engagement.disputable.until : null}
+        />
+      )}
+      {"releasable" in engagement && engagement.releasable && (
+        <ReleaseHeld engagement={engagement} heldCents={engagement.releasable.heldCents} />
+      )}
+    </>
+  );
+}
+
+/** The form that opens a Dispute: the Client's names an amount; both give a reason and photos. */
+function DisputeForm({
+  engagementId,
+  asClient,
+  labourCents,
+  until,
+}: {
+  engagementId: string;
+  asClient: boolean;
+  labourCents: number;
+  until: Date | null;
+}) {
+  const action = useAction();
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [photos, setPhotos] = useState<File[]>([]);
+  if (!open) {
+    return (
+      <div>
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          {d.open(asClient)}
+        </Button>
+      </div>
+    );
+  }
+  const labour = formatRands(labourCents);
+
+  async function send() {
+    if (!window.confirm(d.confirm)) return;
+    const form = new FormData();
+    form.append("engagementId", engagementId);
+    form.append("reason", reason);
+    if (asClient) form.append("amount", amount);
+    for (const file of await Promise.all(photos.map(shrinkPhoto))) form.append("photos", file);
+    await action.run(() => openDispute({ data: form }));
+  }
+
+  return (
+    <form
+      className="space-y-3 rounded-lg border p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void send();
+      }}
+    >
+      <p className="text-sm text-muted-foreground">
+        {asClient ? d.clientLead(labour) : d.artisanLead(labour, until && formatDate(until))}
+      </p>
+      {asClient && (
+        <div className="space-y-1.5">
+          <Label htmlFor="dispute-amount">{d.amount}</Label>
+          <Input
+            id="dispute-amount"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+          />
+        </div>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor="dispute-reason">{d.why}</Label>
+        <Textarea
+          id="dispute-reason"
+          value={reason}
+          rows={3}
+          maxLength={DISPUTE_REASON_MAX}
+          onChange={(event) => setReason(event.target.value)}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="dispute-photos">{d.photos}</Label>
+        <Input
+          id="dispute-photos"
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          multiple
+          onChange={(event) => setPhotos([...(event.target.files ?? [])])}
+        />
+        <p className="text-xs text-muted-foreground">{d.photosHint(DISPUTE_PHOTOS_MAX)}</p>
+      </div>
+      <Refusal message={action.refusal} />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="submit"
+          variant="destructive"
+          disabled={action.busy || !reason.trim() || (asClient && !amount.trim())}
+        >
+          {d.send}
+        </Button>
+        <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
+          {d.cancel}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** The Client releases some or all of what their Dispute holds, or approves the Labour not held. */
+function ReleaseHeld({ engagement, heldCents }: { engagement: Engagement; heldCents: number }) {
+  const action = useAction();
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const { engagementId } = engagement;
+  const labour = engagement.money.payments.find((each) => each.part === "labour");
+  const restCents = (labour?.unreleasedCents ?? 0) - heldCents;
+  const typed = labourAmount.safeParse(amount);
+  return (
+    <div className="space-y-3">
+      {!open && (
+        <div className="flex flex-wrap gap-2">
+          {engagement.approval && (
+            <Button
+              disabled={action.busy}
+              onClick={() => {
+                if (!window.confirm(d.approveRestConfirm(formatRands(restCents)))) return;
+                void action.run(() => approveCompletion({ data: { engagementId } }));
+              }}
+            >
+              {d.approveRest}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setOpen(true)}>
+            {d.release}
+          </Button>
+        </div>
+      )}
+      {open && (
+        <form
+          className="space-y-3 rounded-lg border p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!typed.success) return;
+            if (!window.confirm(d.releaseConfirm(formatRands(typed.data)))) return;
+            void action.run(
+              () => releaseHeld({ data: { engagementId, amount } }),
+              () => {
+                setOpen(false);
+                setAmount("");
+              },
+            );
+          }}
+        >
+          <p className="text-sm text-muted-foreground">{d.releaseLead(formatRands(heldCents))}</p>
+          <div className="space-y-1.5">
+            <Label htmlFor="release-amount">{d.releaseAmount}</Label>
+            <Input
+              id="release-amount"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={action.busy || !typed.success}>
+              {d.releaseSend}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={action.busy}
+              onClick={() => setOpen(false)}
+            >
+              {d.cancel}
+            </Button>
+          </div>
+        </form>
+      )}
+      <Refusal message={action.refusal} />
+    </div>
+  );
+}
+
+/**
+ * The Engagement's Dispute: who opened it and against what, what it named
+ * and holds now, its reason and photos, and how it closed, with the Admin's
+ * split and reason once decided.
+ */
+export function DisputeCard({
+  engagement,
+  asClient,
+}: {
+  engagement: Engagement;
+  asClient: boolean;
+}) {
+  const { dispute } = engagement;
+  if (!dispute) return null;
+  const own = (dispute.by === "client") === asClient;
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>{d.card}</CardTitle>
+          <Badge variant={dispute.state === "open" ? "destructive" : "secondary"}>
+            {d.states[dispute.state]}
+          </Badge>
+        </div>
+        <CardDescription>
+          {d.against[dispute.against]} ·{" "}
+          {d.openedBy(
+            own ? d.you : asClient ? d.theArtisan : d.theClient,
+            formatDate(dispute.openedAt),
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        <dl className="space-y-2">
+          <Row label={d.named}>{formatRands(dispute.namedCents)}</Row>
+          {dispute.state === "open" && (
+            <Row label={d.heldNow}>{formatRands(dispute.heldCents)}</Row>
+          )}
+        </dl>
+        {dispute.reason ? (
+          <div className="space-y-1">
+            <div className="text-xs text-muted-foreground">{d.reason}</div>
+            <p className="whitespace-pre-wrap">{dispute.reason}</p>
+          </div>
+        ) : (
+          <p className="text-muted-foreground">{d.noReason}</p>
+        )}
+        {dispute.reasonHeld && <p className="text-xs text-muted-foreground">{d.reasonHeld}</p>}
+        {dispute.photos.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {dispute.photos.map((photo, index) => (
+              <a key={photo.id} href={photo.href} target="_blank" rel="noreferrer">
+                <img
+                  src={photo.thumbnailHref}
+                  alt={d.photo(index + 1)}
+                  className="aspect-[4/3] w-full rounded-lg object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        )}
+        {dispute.state === "settled" && dispute.closedAt && (
+          <p className="text-muted-foreground">{d.settled(formatDate(dispute.closedAt))}</p>
+        )}
+        {dispute.decision && dispute.closedAt && (
+          <div className="space-y-2 rounded-lg bg-muted/60 p-3">
+            <dl className="space-y-2">
+              <Row label={d.releasedTo(asClient)}>
+                {formatRands(dispute.decision.releasedCents)}
+              </Row>
+              <Row label={d.refundedTo(asClient)}>
+                {formatRands(dispute.decision.refundedCents)}
+              </Row>
+            </dl>
+            <div className="text-xs text-muted-foreground">{d.decisionReason}</div>
+            <p className="whitespace-pre-wrap">{dispute.decision.reason}</p>
+            <p className="text-xs text-muted-foreground">
+              {d.decided(formatDate(dispute.closedAt))}
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const u = t.updatedQuote;
+
+/**
+ * The Updated Quote: the Client pays its difference or rejects it; the
+ * Artisan sees theirs waiting, which they may withdraw, or proposes one
+ * before Completion (ADR 0019).
+ */
+export function UpdatedQuoteCard({
+  engagement,
+  asClient,
+}: {
+  engagement: Engagement;
+  asClient: boolean;
+}) {
+  const proposed = engagement.updatedQuote;
+  const canPropose = "proposeFrom" in engagement && engagement.proposeFrom;
+  if (!proposed && !canPropose) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{u.title}</CardTitle>
+        {proposed && (
+          <CardDescription>
+            {asClient
+              ? u.proposedClient(formatDate(proposed.proposedAt))
+              : u.proposedArtisan(formatDate(proposed.proposedAt))}
+          </CardDescription>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {proposed ? (
+          <>
+            <ProposedLines proposed={proposed} />
+            {"payCents" in proposed ? (
+              <PayOrReject proposed={proposed} />
+            ) : (
+              <Withdraw updatedQuoteId={proposed.updatedQuoteId} />
+            )}
+          </>
+        ) : (
+          "proposeFrom" in engagement &&
+          engagement.proposeFrom && (
+            <ProposeForm engagementId={engagement.engagementId} now={engagement.proposeFrom} />
+          )
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+type Proposed = NonNullable<Engagement["updatedQuote"]>;
+
+/** Each line now and as updated, and the difference. */
+function ProposedLines({ proposed }: { proposed: Proposed }) {
+  const lines = [
+    { label: u.labour, from: proposed.fromLabourCents, to: proposed.labourCents },
+    { label: u.materials, from: proposed.fromMaterialsCents, to: proposed.materialsCents },
+    {
+      label: u.total,
+      from: proposed.fromLabourCents + proposed.fromMaterialsCents,
+      to: proposed.labourCents + proposed.materialsCents,
+    },
+  ];
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-xs text-muted-foreground">
+        <tr>
+          <th />
+          <th className="text-right font-normal">{u.from}</th>
+          <th className="text-right font-normal">{u.to}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {lines.map((line) => (
+          <tr key={line.label}>
+            <td className="py-1 text-muted-foreground">{line.label}</td>
+            <td className="py-1 text-right">{formatRands(line.from)}</td>
+            <td className="py-1 text-right font-medium">{formatRands(line.to)}</td>
+          </tr>
+        ))}
+        <tr className="border-t">
+          <td className="pt-2 font-medium">{u.difference}</td>
+          <td />
+          <td className="pt-2 text-right font-medium">{formatRands(proposed.addsCents)}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+/** The Client pays the difference plus its Protection Fee through checkout, or rejects it. */
+function PayOrReject({ proposed }: { proposed: Extract<Proposed, { payCents: number }> }) {
+  const action = useAction();
+  const [acknowledged, setAcknowledged] = useState(false);
+  const { updatedQuoteId } = proposed;
+  const fee = formatRands(proposed.protectionFeeCents);
+
+  function pay() {
+    let checkoutUrl: string | null = null;
+    void action.run(
+      async () => {
+        const opened = await acceptUpdatedQuote({
+          data: { updatedQuoteId, feeAcknowledged: acknowledged },
+        });
+        if (opened.ok) checkoutUrl = opened.value.checkoutUrl;
+        return opened;
+      },
+      () => {
+        // The new price applies when the money arrives, never on the way back.
+        if (checkoutUrl) window.location.assign(checkoutUrl);
+      },
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <dl className="space-y-1 rounded-lg bg-muted/60 p-3 text-sm">
+        <div className="flex justify-between gap-3">
+          <dt className="text-muted-foreground">{u.fee(PROTECTION_FEE_PERCENT)}</dt>
+          <dd>{fee}</dd>
+        </div>
+        <div className="flex justify-between gap-3 font-semibold">
+          <dt>{u.youPay}</dt>
+          <dd>{formatRands(proposed.payCents)}</dd>
+        </div>
+      </dl>
+      <Label className="items-start gap-2 leading-snug font-normal">
+        <Checkbox checked={acknowledged} onCheckedChange={(checked) => setAcknowledged(checked)} />
+        {u.acknowledge(fee)}
+      </Label>
+      <p className="text-xs text-muted-foreground">{u.payLead}</p>
+      <Refusal message={action.refusal} />
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={action.busy || !acknowledged} onClick={pay}>
+          {u.pay(formatRands(proposed.payCents))}
+        </Button>
+        <Button
+          variant="outline"
+          disabled={action.busy}
+          onClick={() => {
+            if (!window.confirm(u.rejectConfirm)) return;
+            void action.run(() => rejectUpdatedQuote({ data: { updatedQuoteId } }));
+          }}
+        >
+          {u.reject}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The Artisan's Updated Quote waiting for the Client, which they may withdraw. */
+function Withdraw({ updatedQuoteId }: { updatedQuoteId: string }) {
+  const action = useAction();
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">{u.waiting}</p>
+      <Refusal message={action.refusal} />
+      <Button
+        variant="outline"
+        disabled={action.busy}
+        onClick={() => {
+          if (!window.confirm(u.withdrawConfirm)) return;
+          void action.run(() => withdrawUpdatedQuote({ data: { updatedQuoteId } }));
+        }}
+      >
+        {u.withdraw}
+      </Button>
+    </div>
+  );
+}
+
+/** The Artisan names the new Labour and Materials, starting from the price now. */
+function ProposeForm({
+  engagementId,
+  now,
+}: {
+  engagementId: string;
+  now: NonNullable<ArtisanEngagement["proposeFrom"]>;
+}) {
+  const action = useAction();
+  const [open, setOpen] = useState(false);
+  const typedNow = {
+    labour: (now.labourCents / 100).toFixed(2),
+    materials: (now.materialsCents / 100).toFixed(2),
+  };
+  const [amounts, setAmounts] = useState(typedNow);
+  if (!open) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-muted-foreground">{u.proposeLead}</p>
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          {u.propose}
+        </Button>
+      </div>
+    );
+  }
+  // Read as the server reads it, so the button and the confirm agree with it.
+  const typed = updatedQuoteFields.safeParse(amounts);
+  const addsCents = typed.success
+    ? typed.data.labour + typed.data.materials - now.labourCents - now.materialsCents
+    : 0;
+  const clientSupplies = now.materialsBy === "client";
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!window.confirm(u.sendConfirm(formatRands(addsCents)))) return;
+        void action.run(
+          () => proposeUpdatedQuote({ data: { engagementId, ...amounts } }),
+          () => setOpen(false),
+        );
+      }}
+    >
+      <p className="text-sm text-muted-foreground">{u.proposeLead}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(["labour", "materials"] as const).map((part) => (
+          <div key={part} className="space-y-1.5">
+            <Label htmlFor={`updated-${part}`}>{u[part]}</Label>
+            <Input
+              id={`updated-${part}`}
+              inputMode="decimal"
+              value={amounts[part]}
+              disabled={part === "materials" && clientSupplies}
+              onChange={(event) => setAmounts({ ...amounts, [part]: event.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              {part === "materials" && clientSupplies
+                ? u.clientSupplies
+                : u.atLeast(formatRands(now[`${part}Cents`]))}
+            </p>
+          </div>
+        ))}
+      </div>
+      <Refusal message={action.refusal} />
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" disabled={action.busy || addsCents <= 0}>
+          {u.send}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={action.busy}
+          onClick={() => {
+            setOpen(false);
+            setAmounts(typedNow);
+          }}
+        >
+          {u.cancel}
         </Button>
       </div>
     </form>
@@ -573,6 +1198,9 @@ export function CompletionCard({ engagement }: { engagement: Engagement }) {
  */
 export function PaymentsCard({ engagement }: { engagement: Engagement }) {
   const { approval } = engagement;
+  const barLabel = approval
+    ? (engagement.state === "disputed" ? t.restBar : t.approvalBar)(formatDate(approval.dueAt))
+    : "";
   return (
     <Card>
       <CardHeader>
@@ -600,7 +1228,7 @@ export function PaymentsCard({ engagement }: { engagement: Engagement }) {
           <div className="space-y-1.5">
             <div
               role="progressbar"
-              aria-label={t.approvalBar(formatDate(approval.dueAt))}
+              aria-label={barLabel}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(approval.elapsed * 100)}
@@ -611,9 +1239,7 @@ export function PaymentsCard({ engagement }: { engagement: Engagement }) {
                 style={{ width: `${approval.elapsed * 100}%` }}
               />
             </div>
-            <p className="text-xs text-muted-foreground">
-              {t.approvalBar(formatDate(approval.dueAt))}
-            </p>
+            <p className="text-xs text-muted-foreground">{barLabel}</p>
           </div>
         )}
         <RefundsList engagement={engagement} />
@@ -636,11 +1262,15 @@ function RefundsList({ engagement }: { engagement: Engagement }) {
             <div className="min-w-0 flex-1">
               <div className="font-medium">{formatRands(each.amountCents)}</div>
               <div className="text-xs text-muted-foreground">
-                {t.refundLine(
-                  each.materialsCents ? formatRands(each.materialsCents) : null,
-                  each.labourCents ? formatRands(each.labourCents) : null,
-                )}{" "}
-                · {formatDate(each.madeAt)}
+                {[
+                  t.refundLine(
+                    each.materialsCents ? formatRands(each.materialsCents) : null,
+                    each.labourCents ? formatRands(each.labourCents) : null,
+                  ),
+                  formatDate(each.madeAt),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </div>
             </div>
             <Badge variant={each.state === "owed" ? "destructive" : "secondary"}>
@@ -761,7 +1391,11 @@ export function MoneyCard({ engagement }: { engagement: Engagement }) {
           <Row label={t.paidIn}>{formatRands(money.paidInCents)}</Row>
           <Row label={t.released}>{formatRands(money.releasedCents)}</Row>
           <Row label={t.unreleased}>{formatRands(money.unreleasedCents)}</Row>
+          {money.heldCents > 0 && <Row label={t.held}>{formatRands(money.heldCents)}</Row>}
           <Row label={t.refunded}>{formatRands(money.refundedCents)}</Row>
+          {money.chargedBackCents > 0 && (
+            <Row label={t.chargedBack}>{formatRands(money.chargedBackCents)}</Row>
+          )}
           {"protectionFeeCents" in money && (
             <Row label={t.protectionFee}>{formatRands(money.protectionFeeCents)}</Row>
           )}

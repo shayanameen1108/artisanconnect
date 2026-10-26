@@ -184,7 +184,7 @@ describe("a Cancellation after Work started", () => {
     expect(await toldOf(domain, artisan, jobId)).toContainEqual(
       expect.objectContaining({
         event: "engagement.cancelled",
-        title: `The Client cancelled. The Materials stay with you, and the Labour not yet released, ${formatRands(150_000)}, is refunded to them at 08 Oct 2026, 08:00: Paint the lounge`,
+        title: `The Client cancelled. The Materials stay with you, and the Labour not yet released, ${formatRands(150_000)}, is refunded to them at 08 Oct 2026, 08:00, unless you open a Dispute for work already done before then: Paint the lounge`,
       }),
     );
 
@@ -235,7 +235,7 @@ describe("a Cancellation after Work started", () => {
     await domain.system.runDueClocks();
     expect(await reminders(domain, artisan)).toEqual([
       expect.objectContaining({
-        title: `The Labour not yet released, ${formatRands(150_000)}, is refunded to the Client in 24 hours, at 08 Oct 2026, 08:00: Paint the lounge`,
+        title: `The Labour not yet released, ${formatRands(150_000)}, is refunded to the Client in 24 hours, at 08 Oct 2026, 08:00. Open a Dispute before then for work already done: Paint the lounge`,
         link: `/jobs/${jobId}`,
       }),
     ]);
@@ -423,6 +423,23 @@ describe("a Cancellation", () => {
     }
   });
 
+  test("finishes the Job in the Client's Jobs, and both lists show the Engagement's state", async () => {
+    const { domain, given } = await createHarness();
+    const paid = await hiredJob(given);
+    const ended = await hiredJob(given, paid.artisan, paid.client);
+
+    await cancelled(domain, ended.client, ended.engagementId);
+
+    expect(await domain.jobs.mine(paid.client.actor)).toMatchObject({
+      inProgress: [{ jobId: paid.jobId, state: "hired", engagementState: "paid" }],
+      finished: [{ jobId: ended.jobId, state: "hired", engagementState: "cancelled" }],
+    });
+    expect(await domain.quotes.mine(paid.artisan.actor)).toMatchObject([
+      { jobId: ended.jobId, state: "hired", engagementState: "cancelled" },
+      { jobId: paid.jobId, state: "hired", engagementState: "paid" },
+    ]);
+  });
+
   test("is only its parties' to make", async () => {
     const { domain, given } = await createHarness();
     const { engagementId } = await hiredJob(given);
@@ -555,6 +572,8 @@ describe("the Artisan record", () => {
           reason: "Never arrived.",
         },
       ],
+      disputesDecidedAgainst: 0,
+      disputes: [],
     });
     for (const party of [first.client, first.artisan]) {
       expect(await domain.engagements.artisanRecord(party.actor, { artisanId })).toBeNull();
@@ -585,6 +604,7 @@ describe("the Artisan record", () => {
           facts: [
             { label: "Cancelled by the Artisan", value: "0" },
             { label: "Cancelled by Clients before Work started", value: "1" },
+            { label: "Disputes decided against the Artisan", value: "0" },
           ],
         },
         {
@@ -597,14 +617,15 @@ describe("the Artisan record", () => {
 });
 
 type Artisan = Awaited<ReturnType<Harness["given"]["matchableArtisan"]>>;
+type Client = Awaited<ReturnType<Harness["given"]["client"]>>;
 
 /**
  * A Client's Painting Job Hired from the default Quote: R1 500 Labour and
  * R500 Materials, starting today (5 October 2026). The Artisan given, or a
  * new one, Quotes it.
  */
-async function hiredJob(given: Harness["given"], by?: Artisan) {
-  const client = await given.client();
+async function hiredJob(given: Harness["given"], by?: Artisan, of?: Client) {
+  const client = of ?? (await given.client());
   const artisan = by ?? (await given.matchableArtisan({ name: "Sipho Dlamini" }));
   const jobId = await given.openJob(client);
   const quoteId = await given.sentQuote(artisan, jobId, { startOn: "2026-10-05" });

@@ -13,12 +13,19 @@ import { accountIdOf, type Actor } from "../actor";
 import type { Context } from "../context";
 import { openWrites } from "../conversations/rows";
 import { causedBy } from "../errors";
-import { JOB_AS_ARTISAN_COLUMNS, jobAsArtisanView, jobRow, type JobRow } from "../jobs/rows";
+import {
+  inView,
+  JOB_AS_ARTISAN_COLUMNS,
+  jobAsArtisanView,
+  jobRow,
+  type JobRow,
+} from "../jobs/rows";
 import { browse, type Narrowing } from "../profiles";
 import { belowFive, COUNTED_STATES, jobFull, liveQuoteOf, takesQuotesNow } from "../quotes/rows";
 import { ok, refuse } from "../result";
 import { invitations, jobMatches, jobs, quotes, regions, suburbs } from "../schema";
 import { defineSection } from "../section";
+import { isSuspended, suspendedRefusal } from "../standing";
 import { emailTells, tellWhile } from "../tells";
 
 // Invitations (#123, ADR 0003): a Client asks Artisans of their choosing to
@@ -33,51 +40,19 @@ export const invitationsSection = defineSection({
     async invite(actor: Actor, input: { jobId: string; artisanId: string }) {
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(actor)) return noJob();
+      if (job.hireAgainArtisanId && job.hireAgainArtisanId !== input.artisanId) {
+        return onlyHiredAgain();
+      }
       if (job.state !== "open") return notOpen();
+      if (job.outOfViewSince) return outOfView();
       if (!(await takesQuotesNow(ctx, job.id))) return jobFull();
-      // Not by or to a Suspended Account, once there are Suspensions (#136).
+      if (await isSuspended(ctx, job.clientId)) return suspendedRefusal("invite an Artisan");
+      // A Suspended Artisan is not listed (#136).
       if ((await invitable(ctx, job, { artisanId: input.artisanId })).length === 0) {
         return notListed();
       }
-      // Each write is guarded on the Job still taking Quotes. The Invitation
-      // opens the Conversation too, unless a Quote did.
-      const stillOpen = and(eq(jobs.id, job.id), eq(jobs.state, "open"), belowFive())!;
-      const landed = exists(
-        ctx.db
-          .select({ one: sql`1` })
-          .from(jobs)
-          .where(stillOpen),
-      );
       try {
-        const [invited] = await ctx.db.batch([
-          ctx.db
-            .insert(invitations)
-            .select(
-              ctx.db
-                .select({
-                  id: sql<string>`${ctx.newId()}`.as("id"),
-                  jobId: jobs.id,
-                  artisanId: sql<string>`${input.artisanId}`.as("artisan_id"),
-                  invitedAt: sql<number>`${ctx.now().getTime()}`.as("invited_at"),
-                  passedAt: sql<null>`null`.as("passed_at"),
-                })
-                .from(jobs)
-                .where(stillOpen),
-            )
-            .returning({ id: invitations.id }),
-          ...tellWhile(
-            ctx,
-            actor,
-            [input.artisanId],
-            {
-              event: "job.invited",
-              title: `Invited to Quote: ${job.title}`,
-              link: `/jobs/${job.id}`,
-            },
-            landed,
-          ),
-          ...openWrites(ctx, { jobId: job.id, artisanId: input.artisanId }, landed),
-        ]);
+        const [invited] = await ctx.db.batch(invitationWrites(ctx, actor, job, input.artisanId));
         if (invited.length === 0) {
           return (await jobRow(ctx, job.id))?.state === "open" ? jobFull() : notOpen();
         }
@@ -96,6 +71,7 @@ export const invitationsSection = defineSection({
     /**
      * Whom the Job's Client may invite: Browse narrowed to the Job's category,
      * and to gas-registered Artisans on a gas Job, optionally in one Region,
+     * and to the Artisan hired again on a Job opened by Hire Again (#139),
      * each marked once invited or once their Quote is Sent. Null for anyone else. Whether an Artisan
      * holds or passed a Job Match for the Job shows nowhere.
      */
@@ -103,7 +79,14 @@ export const invitationsSection = defineSection({
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(viewer)) return null;
       const [listed, invited, quoted] = await Promise.all([
-        invitable(ctx, job, { regionId: input.regionId }),
+        // On a Job opened by Hire Again, that one Artisan, wherever they work.
+        invitable(
+          ctx,
+          job,
+          job.hireAgainArtisanId
+            ? { artisanId: job.hireAgainArtisanId }
+            : { regionId: input.regionId },
+        ),
         invitedTo(ctx, job.id),
         quotedOn(ctx, job.id),
       ]);
@@ -189,6 +172,7 @@ export const invitationsSection = defineSection({
             eq(invitations.artisanId, viewer.accountId),
             isNull(invitations.passedAt),
             eq(jobs.state, "open"),
+            inView(),
             notExists(liveQuoteOf(ctx, invitations.jobId, invitations.artisanId)),
           ),
         )
@@ -199,10 +183,59 @@ export const invitationsSection = defineSection({
 });
 
 /**
+ * The writes that invite the Artisan to the Job, with a Tell, each guarded on
+ * the Job still taking Quotes. The Invitation opens the Conversation too,
+ * unless a Quote did. The first returns the Invitation's id if it was written.
+ */
+export function invitationWrites(
+  ctx: Context,
+  actor: Actor,
+  job: Pick<JobRow, "id" | "title">,
+  artisanId: string,
+) {
+  const stillOpen = and(eq(jobs.id, job.id), eq(jobs.state, "open"), belowFive())!;
+  const landed = exists(
+    ctx.db
+      .select({ one: sql`1` })
+      .from(jobs)
+      .where(stillOpen),
+  );
+  return [
+    ctx.db
+      .insert(invitations)
+      .select(
+        ctx.db
+          .select({
+            id: sql<string>`${ctx.newId()}`.as("id"),
+            jobId: jobs.id,
+            artisanId: sql<string>`${artisanId}`.as("artisan_id"),
+            invitedAt: sql<number>`${ctx.now().getTime()}`.as("invited_at"),
+            passedAt: sql<null>`null`.as("passed_at"),
+          })
+          .from(jobs)
+          .where(stillOpen),
+      )
+      .returning({ id: invitations.id }),
+    ...tellWhile(
+      ctx,
+      actor,
+      [artisanId],
+      {
+        event: "job.invited",
+        title: `Invited to Quote: ${job.title}`,
+        link: `/jobs/${job.id}`,
+      },
+      landed,
+    ),
+    ...openWrites(ctx, { jobId: job.id, artisanId }, landed),
+  ] as const;
+}
+
+/**
  * Whom the Job's Client may invite, narrowed as given: Browse for the Job's
  * category, and only gas-registered Artisans on a gas Job.
  */
-async function invitable(ctx: Context, job: JobRow, narrow: Narrowing) {
+export async function invitable(ctx: Context, job: JobRow, narrow: Narrowing) {
   if (!job.category) return [];
   const listed = await browse(ctx, job.category, narrow);
   return listed.filter((artisan) => !job.gasWork || artisan.gasWork);
@@ -260,12 +293,26 @@ function notOpen() {
   return refuse("not-open", "Artisans can be invited only while the Job is Open.");
 }
 
+function outOfView() {
+  return refuse(
+    "out-of-view",
+    "This Job is out of view until you fix it, so nobody can be invited to it.",
+  );
+}
+
 function notListed() {
   return refuse("not-listed", "That Artisan cannot be invited to Quote on this Job.");
 }
 
 function noInvitation() {
   return refuse("not-found", "You hold no Invitation for that Job.");
+}
+
+function onlyHiredAgain() {
+  return refuse(
+    "hire-again",
+    "This Job is for Hire Again, so only the Artisan you are hiring again can be invited.",
+  );
 }
 
 function alreadyInvited() {

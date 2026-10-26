@@ -10,17 +10,22 @@ import { useAction } from "@/components/use-action";
 import { Details, Fact } from "@/components/job-details";
 import { InviteList, type InviteListView } from "@/components/invite-list";
 import { OfferedJob } from "@/components/offered-job";
+import { EngagementReviewsCard, WriteReview } from "@/components/reviews";
 import { ClientQuotes } from "@/components/quotes";
 import {
   ActivityCard,
   CancelAction,
+  HireAgainAction,
   CompletionActions,
   CompletionCard,
+  DisputeActions,
+  DisputeCard,
   EngagementNextStep,
   HiredQuoteCard,
   MoneyCard,
   PaymentsCard,
   StartActions,
+  UpdatedQuoteCard,
 } from "@/components/engagement";
 import { formatRands } from "@/domain/money";
 import {
@@ -171,7 +176,9 @@ function ClientJob({
             {job.title || copy.jobs.untitled}
           </h1>
           <Badge variant={job.state === "open" ? "default" : "secondary"}>
-            {copy.jobs.states[job.state]}
+            {job.engagement
+              ? copy.engagement.states[job.engagement.state]
+              : copy.jobs.states[job.state]}
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -288,6 +295,7 @@ function Posted({
           label={copy.jobs.nextStep}
           title={sent > 0 ? copy.quotes.title(sent) : copy.jobs.states[job.state]}
         >
+          {job.outOfView && <Refusal message={t.outOfView(job.outOfView.reason)} />}
           {job.state === "held" && <p className="text-sm text-muted-foreground">{t.heldLead}</p>}
           {job.state === "open" && job.expiresAt && (
             <p className="text-sm text-muted-foreground">{t.openLead(formatDate(job.expiresAt))}</p>
@@ -355,7 +363,12 @@ function Posted({
         </NextStepCard>
 
         {invite && (
-          <InviteList jobId={job.jobId} inviteOnly={job.matching === "invite-only"} list={invite} />
+          <InviteList
+            jobId={job.jobId}
+            inviteOnly={job.matching === "invite-only"}
+            hireAgain={job.hireAgain && (job.hireAgain.publicName ?? copy.quotes.noName)}
+            list={invite}
+          />
         )}
 
         {beingChecked && (
@@ -482,8 +495,18 @@ function Hired({
           <NotHired job={job} />
           <StartActions engagement={engagement} asClient />
           <CompletionActions engagement={engagement} asClient />
+          <DisputeActions engagement={engagement} asClient />
           <CancelAction engagement={engagement} asClient />
+          <WriteReview
+            engagementId={engagement.engagementId}
+            reviews={engagement.reviews}
+            asClient
+          />
+          <HireAgainAction engagement={engagement} />
         </EngagementNextStep>
+        <EngagementReviewsCard reviews={engagement.reviews} asClient />
+        <UpdatedQuoteCard engagement={engagement} asClient />
+        <DisputeCard engagement={engagement} asClient />
         <CompletionCard engagement={engagement} />
         <PaymentsCard engagement={engagement} />
         <ActivityCard engagement={engagement} />

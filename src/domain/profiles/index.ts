@@ -1,4 +1,16 @@
-import { and, asc, eq, exists, inArray, like, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  like,
+  not,
+  sql,
+  type SQL,
+  type SQLWrapper,
+} from "drizzle-orm";
 import { accountIdOf, type Actor } from "../actor";
 import { firstProblem } from "../accounts/inputs";
 import { publicName } from "../accounts/names";
@@ -9,6 +21,7 @@ import { causedBy } from "../errors";
 import { ok, refuse } from "../result";
 import { accounts, artisanRegions, authUsers, regions, verificationChecks } from "../schema";
 import { defineSection } from "../section";
+import { suspendedNow } from "../standing";
 import {
   isServiceCategory,
   SERVICE_CATEGORY_NAMES,
@@ -29,6 +42,8 @@ import {
   withdrawEdit,
 } from "./edits";
 import { aboutText } from "./inputs";
+import { completedCounts } from "../engagements/rows";
+import { reviewsShown, summariesOf } from "../reviews/rows";
 
 // Browse and the Artisan Profile (#120, ADR 0016): anyone, signed in or not,
 // lists the Artisans verified for one Service Category, optionally in one
@@ -64,7 +79,7 @@ export const profilesSection = defineSection({
         .select({ artisanId: accounts.id })
         .from(accounts)
         .innerJoin(authUsers, eq(authUsers.id, accounts.id))
-        .where(and(mayBeListed(), wasVerified(ctx)));
+        .where(and(mayBeListed(), wasVerified(ctx), not(suspendedNow(ctx, accounts.id))));
     },
 
     /**
@@ -74,12 +89,18 @@ export const profilesSection = defineSection({
      */
     async mine(viewer: Actor) {
       if (viewer.kind !== "artisan") return null;
-      const [shown, standing, profile] = await Promise.all([
+      const [shown, standing, profile, [outOfView]] = await Promise.all([
         shownVersion(ctx, viewer.accountId),
         editsStanding(ctx, viewer.accountId),
         publicProfile(ctx, viewer.accountId),
+        ctx.db
+          .select({ since: accounts.profileOutOfViewSince, reason: accounts.profileOutOfViewFor })
+          .from(accounts)
+          .where(eq(accounts.id, viewer.accountId)),
       ]);
       return {
+        /** Why the Admin took it out of view from a Report, until an edit fixes it (#136). */
+        outOfView: outOfView?.since ? { reason: outOfView.reason ?? "" } : null,
         shown: versionView(viewer.accountId, shown),
         profile,
         beingChecked: standing.beingChecked && versionView(viewer.accountId, standing.beingChecked),
@@ -256,6 +277,8 @@ function mayBeListed() {
     eq(authUsers.emailVerified, true),
     // Names the Content check has not passed are nobody else's to see.
     eq(accounts.namesShown, true),
+    // Nor a Profile the Admin took out of view, until an edit fixes it (#136).
+    isNull(accounts.profileOutOfViewSince),
   );
 }
 
@@ -289,7 +312,7 @@ function wasVerified(ctx: Context) {
  * The Artisan, if anyone may open its Profile, with what it is verified for
  * now, which may be nothing once a check has expired.
  */
-async function openableArtisan(ctx: Context, artisanId: string) {
+export async function openableArtisan(ctx: Context, artisanId: string) {
   const [row] = await ctx.db
     .select(LISTED_COLUMNS)
     .from(accounts)
@@ -320,24 +343,33 @@ async function publicProfile(ctx: Context, artisanId: string) {
     badges,
     regions: worksIn.get(row.id) ?? [],
     availableForJobs: row.availableForJobs,
-    // Engagements and Reviews come with their tickets (#130, #138).
-    completed: 0,
-    reviews: { average: null, count: 0, items: [] },
+    completed: (await completedCounts(ctx, "artisanId", [row.id])).get(row.id),
+    /** The Reviews shown of the Artisan, one average and count, and the newest 20 (#138). */
+    reviews: await reviewsShown(ctx, row.id),
   };
 }
 
 /**
  * Browse: the Artisans verified now for the category, in the Region or only
- * the Artisan if one is given, Available for Jobs first, then by public name
- * A to Z.
+ * the Artisan if one is given, Available for Jobs first, then by higher
+ * Review average (none last), then more Reviews, then by public name A to Z,
+ * so the order is predictable and cannot be bought.
  */
 export async function browse(ctx: Context, category: ServiceCategory, narrow: Narrowing = {}) {
   const listed = await listedArtisans(ctx, category, narrow);
-  return listed.sort(
-    (a, b) =>
-      Number(b.availableForJobs) - Number(a.availableForJobs) ||
-      a.publicName.localeCompare(b.publicName, "en-ZA", { sensitivity: "base" }),
+  const reviewed = await summariesOf(
+    ctx,
+    listed.map((artisan) => artisan.artisanId),
   );
+  return listed
+    .map((artisan) => ({ ...artisan, reviews: reviewed.get(artisan.artisanId) }))
+    .sort(
+      (a, b) =>
+        Number(b.availableForJobs) - Number(a.availableForJobs) ||
+        (b.reviews.average ?? 0) - (a.reviews.average ?? 0) ||
+        b.reviews.count - a.reviews.count ||
+        a.publicName.localeCompare(b.publicName, "en-ZA", { sensitivity: "base" }),
+    );
 }
 
 export type Narrowing = { regionId?: string; artisanId?: string };
@@ -357,6 +389,8 @@ async function listedArtisans(
     .where(
       and(
         mayBeListed(),
+        // A Suspended Artisan's Profile leaves Browse, and so the invite list (#136).
+        not(suspendedNow(ctx, accounts.id)),
         artisanId === undefined ? undefined : eq(accounts.id, artisanId),
         exists(
           ctx.db

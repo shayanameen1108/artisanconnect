@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, not, sql } from "drizzle-orm";
 import { accountIdOf, type Actor } from "../actor";
 import { firstProblem } from "../accounts/inputs";
 import { checkContent } from "../content/check";
@@ -7,8 +7,8 @@ import type { Context } from "../context";
 import { causedBy } from "../errors";
 import { ok, refuse } from "../result";
 import { saDay } from "../sa-days";
-import { clientShownName, publicName } from "../accounts/names";
-import { accounts, jobs, suburbs, type JOB_STATES } from "../schema";
+import { shownName } from "../accounts/names";
+import { accounts, jobs, suburbs, type ENGAGEMENT_STATES, type JOB_STATES } from "../schema";
 import { defineSection } from "../section";
 import { SERVICE_CATEGORY_NAMES } from "../service-categories";
 import { checkFileCount, discardFiles, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
@@ -18,9 +18,11 @@ import { closeJobWrites } from "../quotes/ends";
 import { hasHadQuote, isLive, newestQuote, takesQuotesNow } from "../quotes/rows";
 import { ownQuoteView } from "../quotes/views";
 import { sendDueBatch } from "../matches/batches";
+import { isSuspended, suspendedNow, suspendedRefusal } from "../standing";
 import { emailTells } from "../tells";
 import { engagementAsArtisan, engagementAsClient, notHiredPayments } from "../engagements/views";
 import { expiryClocks } from "./expiry";
+import { hireAgainDraft, hireAgainProblem, hireAgainView, hireAgainWrites } from "./hire-again";
 import { heldJob, holdWrites, refusalOf, stillDraft, withdrawHeldJob } from "./held";
 import {
   EDITABLE_STATES,
@@ -44,8 +46,11 @@ import {
   type JobPhoto,
   type JobRow,
 } from "./rows";
+import { completedCounts } from "../engagements/rows";
+import { reviewsShown } from "../reviews/rows";
 
 type JobState = (typeof JOB_STATES)[number];
+type EngagementState = (typeof ENGAGEMENT_STATES)[number];
 
 // Posting a Job (#121, ADR 0003): a Client gives a Job its trade, site,
 // details, and photos, and chooses matched or Invite-only. A Draft may omit
@@ -92,7 +97,8 @@ export const jobsSection = defineSection({
         // Only Plumbing asks about gas.
         gasWork: fields.category === "plumbing" ? (fields.gasWork ?? null) : null,
         preferredStart: fields.preferredStart,
-        matching: fields.matching ?? null,
+        // A Job opened by Hire Again stays Invite-only (#139).
+        matching: draft?.hireAgainOf ? "invite-only" : (fields.matching ?? null),
         updatedAt: now,
       };
       let jobId: string;
@@ -136,8 +142,11 @@ export const jobsSection = defineSection({
     async post(actor: Actor, input: { jobId: string }) {
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(actor) || job.state !== "draft") return noDraft();
+      if (await isSuspended(ctx, job.clientId)) return suspendedRefusal("post a Job");
       const problem = postingProblem(job, job.photos.length, saDay(ctx.now()));
       if (problem) return refuse("incomplete", problem);
+      const notInvitable = await hireAgainProblem(ctx, job);
+      if (notInvitable) return refuse("not-invitable", notInvitable);
 
       const checked = await checkContent(ctx, {
         text: jobText(job),
@@ -151,8 +160,16 @@ export const jobsSection = defineSection({
       const [moved] =
         verdict.verdict === "held"
           ? await ctx.db.batch(holdWrites(ctx, job, verdict.reason))
-          : await ctx.db.batch(openWrites(ctx, job, stillDraft(job)));
-      if (moved.length === 0) return changed();
+          : await ctx.db.batch([
+              // Not if a Suspension landed since it was asked above.
+              ...openWrites(ctx, job, and(stillDraft(job), not(suspendedNow(ctx, job.clientId)))!),
+              // Only once it opened: the Invitation is guarded on its being Open.
+              ...(await hireAgainWrites(ctx, job)),
+            ]);
+      if (moved.length === 0) {
+        if (await isSuspended(ctx, job.clientId)) return suspendedRefusal("post a Job");
+        return changed();
+      }
       if (!held) await offer(ctx, job.id);
       return ok({ state: held ? ("held" as const) : ("open" as const) });
     },
@@ -169,7 +186,9 @@ export const jobsSection = defineSection({
       if (!isEditable(job.state)) {
         return refuse("not-editable", "Only an Open or Expired Job can be edited.");
       }
-      if (await hasHadQuote(ctx, job.id)) {
+      // One out of view may be fixed whatever its Quotes (#136).
+      const fixing = job.outOfViewSince !== null;
+      if (!fixing && (await hasHadQuote(ctx, job.id))) {
         return refuse("not-editable", "A Job that has had a Quote cannot be edited.");
       }
       const parsed = editFields.safeParse(input);
@@ -215,9 +234,11 @@ export const jobsSection = defineSection({
         }
         const verdict = checked.value;
         const version = { ...fields, photos: [...kept, ...added] };
-        applied = verdict.verdict === "clear";
-        if (verdict.verdict === "held") {
-          await ctx.commit(holdEditWrites(ctx, job, version, verdict.reason));
+        // A fix of a Job out of view waits for the Admin, as it brings it back.
+        applied = verdict.verdict === "clear" && !fixing;
+        if (verdict.verdict === "held" || fixing) {
+          const heldFor = verdict.verdict === "held" ? verdict.reason : FIX_HELD_FOR;
+          await ctx.commit(holdEditWrites(ctx, job, version, heldFor));
         } else {
           // A batch, not a commit, to read whether the guarded update landed.
           const [landed] = await ctx.db.batch(applyWrites(ctx, job, version));
@@ -303,6 +324,7 @@ export const jobsSection = defineSection({
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(actor)) return noJob();
       if (job.state !== "expired") return notExpired();
+      if (await isSuspended(ctx, job.clientId)) return suspendedRefusal("renew a Job");
       try {
         // Unguarded on purpose: on a Job no longer Expired a trigger aborts the batch.
         await ctx.commit([...openWrites(ctx, job)]);
@@ -312,6 +334,15 @@ export const jobsSection = defineSection({
       }
       await offer(ctx, job.id);
       return ok({});
+    },
+
+    /**
+     * Hire Again (#139): the Client's Draft of an Invite-only Job, prefilled
+     * from their Completed Engagement and inviting only its Artisan once it
+     * opens.
+     */
+    async hireAgain(actor: Actor, input: { engagementId: string }) {
+      return hireAgainDraft(ctx, actor, input.engagementId);
     },
 
     /** Discards the Client's Draft and its photos. */
@@ -337,15 +368,17 @@ export const jobsSection = defineSection({
         jobId: row.id,
         title: row.title,
         state: row.state,
+        /** Once Hired, where its Engagement stands, which the list shows instead. */
+        engagementState: row.engagementState,
         category: row.category && SERVICE_CATEGORY_NAMES[row.category],
         region: row.regionName,
         updatedAt: row.updatedAt,
         expiresAt: row.expiresAt,
       }));
       return {
-        needsYou: summaries.filter((job) => GROUPS[job.state] === "needsYou"),
-        inProgress: summaries.filter((job) => GROUPS[job.state] === "inProgress"),
-        finished: summaries.filter((job) => GROUPS[job.state] === "finished"),
+        needsYou: summaries.filter((job) => groupOf(job) === "needsYou"),
+        inProgress: summaries.filter((job) => groupOf(job) === "inProgress"),
+        finished: summaries.filter((job) => groupOf(job) === "finished"),
       };
     },
 
@@ -377,13 +410,14 @@ export const jobsSection = defineSection({
     async view(viewer: Actor, input: { jobId: string }) {
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(viewer)) return null;
-      const [refusal, edits, quoted, takesQuotes, engagement, notHired] = await Promise.all([
+      const [refusal, edits, quoted, takesQuotes, engagement, notHired, again] = await Promise.all([
         refusalOf(ctx, job),
         editsStanding(ctx, job.id),
         hasHadQuote(ctx, job.id),
         takesQuotesNow(ctx, job.id),
         engagementAsClient(ctx, job),
         notHiredPayments(ctx, job.id),
+        hireAgainView(ctx, job),
       ]);
       return {
         jobId: job.id,
@@ -399,10 +433,17 @@ export const jobsSection = defineSection({
         gasWork: job.gasWork,
         preferredStart: job.preferredStart,
         matching: job.matching,
+        /** The only Artisan it invites, if it was opened by Hire Again (#139). */
+        hireAgain: again,
         openedAt: job.openedAt,
         expiresAt: job.expiresAt,
-        /** Whether the Client may edit it: Open or Expired, before its first Quote. */
-        editable: isEditable(job.state) && !quoted,
+        /**
+         * Whether the Client may edit it: Open or Expired, before its first
+         * Quote, or whenever it is out of view, to fix it.
+         */
+        editable: isEditable(job.state) && (!quoted || job.outOfViewSince !== null),
+        /** Why the Admin took it out of view from a Report, until an edit fixes it (#136). */
+        outOfView: job.outOfViewSince ? { reason: job.outOfViewFor ?? "" } : null,
         /** Whether the Job takes Quotes, and so Invitations: Open, with fewer than five. */
         takesQuotes,
         /** Why the Admin refused it when it was last posted, while it is a Draft again. */
@@ -447,8 +488,10 @@ export const jobsSection = defineSection({
           .where(eq(accounts.id, job.clientId)),
       ]);
       // A Quote keeps the Job in view, whatever becomes of it or the Job, and
-      // so does an Invitation not passed, for its Conversation.
+      // so does an Invitation not passed, for its Conversation; but not once
+      // the Admin takes it out of view (#136), which a Hired Job never is.
       if (!held && !isLive(quote) && !invitation) return null;
+      if (job.outOfViewSince) return null;
       const engagement = await engagementAsArtisan(ctx, job.id, viewer.accountId);
       return {
         jobId: job.id,
@@ -478,10 +521,10 @@ export const jobsSection = defineSection({
         takesQuotes: await takesQuotesNow(ctx, job.id),
         client: {
           // Names the Content check has not passed are nobody else's to see.
-          shownName: client?.namesShown ? clientShownName(publicName(client)) : null,
-          // Reviews and Completed Engagements come with their tickets (#138, #130).
-          reviews: { average: null, count: 0 },
-          completed: 0,
+          shownName: client?.namesShown ? shownName("client", client) : null,
+          /** Reviews of the Client, which only an Artisan offered, invited, or Quoting reads (#138). */
+          reviews: await reviewsShown(ctx, job.clientId),
+          completed: (await completedCounts(ctx, "clientId", [job.clientId])).get(job.clientId),
         },
       };
     },
@@ -490,12 +533,16 @@ export const jobsSection = defineSection({
 
 const CLIENTS_ONLY = "Only a Client posts a Job.";
 
+/** Why an edit the Content check cleared waits for the Admin anyway. */
+const FIX_HELD_FOR =
+  "The Content check found nothing. It is the Client's fix of a Job out of view, which the Admin checks before the Job shows again.";
+
 /**
  * What the Artisan holds for the Job while it is Open, a Job Match not passed
  * or an Invitation, with when each came; null if neither.
  */
 async function heldOnJob(ctx: Context, job: JobRow, artisan: { accountId: string }) {
-  if (job.state !== "open") return null;
+  if (job.state !== "open" || job.outOfViewSince) return null;
   const [match, invitation] = await Promise.all([
     heldMatch(ctx, job.id, artisan.accountId),
     heldInvitation(ctx, job.id, artisan.accountId),
@@ -508,7 +555,9 @@ async function heldOnJob(ctx: Context, job: JobRow, artisan: { accountId: string
  * Whether the Artisan sees the Job: they hold it while it is Open, they hold
  * an Invitation for it, or they have Quoted on it.
  */
-async function seesJob(ctx: Context, job: JobRow, artisan: { accountId: string }) {
+export async function seesJob(ctx: Context, job: JobRow, artisan: { accountId: string }) {
+  // Out of view, nobody but its Client sees it, Quote or none (#136).
+  if (job.outOfViewSince) return false;
   const [held, quote, invitation] = await Promise.all([
     heldOnJob(ctx, job, artisan),
     newestQuote(ctx, job.id, artisan.accountId),
@@ -538,6 +587,13 @@ const GROUPS: Record<JobState, "needsYou" | "inProgress" | "finished"> = {
   expired: "finished",
   closed: "finished",
 };
+
+/** Where a Job sits in My Jobs: a Hired one is Finished once its Engagement is Completed or Cancelled. */
+function groupOf(job: { state: JobState; engagementState: EngagementState | null }) {
+  return job.engagementState === "completed" || job.engagementState === "cancelled"
+    ? "finished"
+    : GROUPS[job.state];
+}
 
 function notOpen() {
   return refuse("not-open", "Only an Open Job can be closed.");

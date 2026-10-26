@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notExists, sql } from "drizzle-orm";
 import { system, type Actor } from "../actor";
 import { publicName } from "../accounts/names";
 import { isAlreadyDecided } from "../content/held";
@@ -9,37 +9,32 @@ import { insertWhile } from "../guarded";
 import { addedBy, editsStanding, withdrawEdit } from "../jobs/edits";
 import { jobRow, type JobRow } from "../jobs/rows";
 import { discardFiles } from "../uploads";
-import { ledgerWrites, LEDGER_KINDS, paymentInRows } from "../ledger";
+import { ledgerWrites, paymentInRows } from "../ledger";
 import { formatRands, PROTECTION_FEE_PERCENT, protectionFeeCents } from "../money";
 import type { PaymentEvent, PaymentMethod } from "../ports";
 import { closeJobWrites } from "../quotes/ends";
 import { startPassed, verifiedForJob } from "../quotes/rules";
 import { isLive, quoteRow, type QuoteRow } from "../quotes/rows";
-import { notHiredRefundWrite, sendRefunds } from "../refunds";
-import { bankReference, shortId } from "../references";
+import { bankReference } from "../references";
 import { ok, refuse } from "../result";
 import { saDay, formatDay } from "../sa-days";
-import {
-  accounts,
-  authUsers,
-  engagements,
-  jobs,
-  payments,
-  quotes,
-  type NOT_HIRED_REASONS,
-} from "../schema";
+import { accounts, authUsers, chargebacks, engagements, jobs, payments, quotes } from "../schema";
+import { isSuspended, suspendedRefusal } from "../standing";
 import { emailAddress, emailTells, tell } from "../tells";
+import {
+  notHiredWrites,
+  openCollection,
+  paymentRow,
+  refundWhole,
+  type NotHiredReason,
+  type PaymentRow,
+} from "./payments-in";
+import { updatedQuotePaid } from "./updated-quote";
 
 // Hire (#126, ADR 0004): the Client Hires a Sent Quote by paying for it, the
 // Quote plus the Protection Fee, through the payment adapter's checkout. It
 // is asked when the checkout opens and again when the money arrives (ADR
 // 0002); only the collection's event Hires, never the redirect back.
-
-type PaymentRow = typeof payments.$inferSelect;
-type NotHiredReason = (typeof NOT_HIRED_REASONS)[number];
-
-/** Card, or Instant EFT. */
-const METHODS: PaymentMethod[] = ["card", "pay_by_bank"];
 
 /**
  * Opens a checkout for the Client to Hire a Sent Quote on their Job: the
@@ -73,7 +68,17 @@ export async function openCheckout(
       "Tick that the Protection Fee is not refunded, to pay for this Quote.",
     );
   }
-  // Not while either is Suspended, too, once there are Suspensions (#136).
+  if (job.outOfViewSince) {
+    return refuse(
+      "out-of-view",
+      "This Job is out of view until you fix it, so its Quotes cannot be Hired.",
+    );
+  }
+  if (await isSuspended(ctx, job.clientId)) return suspendedRefusal("Hire");
+  // A Suspended Artisan's Sent Quotes were Withdrawn; this is for the moment between.
+  if (await isSuspended(ctx, quote.artisanId)) {
+    return refuse("not-sent", "This Artisan cannot be Hired now.");
+  }
   if (!(await verifiedForJob(ctx, quote.artisanId, job))) {
     return refuse(
       "not-verified",
@@ -97,15 +102,7 @@ export async function openCheckout(
   };
   // Written first, so its event always finds it.
   await ctx.db.insert(payments).values(payment);
-  const { checkoutUrl } = await ctx.ports.payments.createCollection({
-    id: payment.id,
-    amountCents: payment.amountCents,
-    methods: METHODS,
-    payerReference: bankReference(payment.id),
-    beneficiaryReference: `ArtisanConnect ${shortId(payment.id)}`.slice(0, 20),
-    returnUrl: new URL(`/jobs/${job.id}`, ctx.config.appUrl).href,
-  });
-  return ok({ checkoutUrl });
+  return ok({ checkoutUrl: await openCollection(ctx, payment) });
 }
 
 /**
@@ -119,7 +116,7 @@ export async function collectionSucceeded(
 ) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const payment = await paymentRow(ctx, event.collectionId);
-    // Not a Hire's: an Updated Quote's comes with its ticket (#134).
+    if (payment?.updatedQuoteId) return updatedQuotePaid(ctx, event);
     if (!payment || payment.state === "paid") return;
     if (payment.state === "not-hired") return refundWhole(ctx, payment);
     const quote = await quoteRow(ctx, payment.quoteId);
@@ -130,7 +127,7 @@ export async function collectionSucceeded(
     try {
       await ctx.commit(
         reason
-          ? await notHiredWrites(ctx, payment, job, reason)
+          ? notHiredWrites(ctx, payment, job, reason)
           : await hireWrites(ctx, payment, quote, job, event.method, beingChecked),
       );
     } catch (error) {
@@ -171,7 +168,12 @@ async function notHiredReason(
     return "quote-ended";
   }
   if (quote.revisedAt?.getTime() !== payment.quoteRevisedAt?.getTime()) return "quote-changed";
-  // Not while either is Suspended, too, once there are Suspensions (#136).
+  // Either party's Suspension, or the Job taken out of view, while the Client
+  // paid (#136). One landing after the Hire leaves it, as a paid Engagement goes on.
+  if (job.outOfViewSince) return "out-of-view";
+  if ((await isSuspended(ctx, job.clientId)) || (await isSuspended(ctx, quote.artisanId))) {
+    return "suspended";
+  }
   if (!(await verifiedForJob(ctx, quote.artisanId, job))) return "not-verified";
   return null;
 }
@@ -254,56 +256,10 @@ async function hireWrites(
 }
 
 /**
- * The writes of a Payment that arrived but Hires nobody: it and its
- * Protection Fee in the ledger, owed back whole, and the Client told why.
- * The Refund itself is asked of the adapter once they are written.
- */
-async function notHiredWrites(
-  ctx: Context,
-  payment: PaymentRow,
-  job: JobRow,
-  reason: NotHiredReason,
-): Promise<Write[]> {
-  const refundId = ctx.newId();
-  return [
-    // Unguarded on purpose: on a Payment no longer open or failed a trigger aborts the batch.
-    ctx.db
-      .update(payments)
-      .set({ state: "not-hired", notHiredFor: reason, refundId, settledAt: ctx.now() })
-      .where(eq(payments.id, payment.id)),
-    notHiredRefundWrite(ctx, refundId, payment),
-    ...ledgerWrites(ctx, [
-      ...paymentInRows(payment, null),
-      {
-        kind: LEDGER_KINDS.refundOwed,
-        amountCents: payment.amountCents,
-        paymentId: payment.id,
-        engagementId: null,
-      },
-    ]),
-    ...tell(ctx, system, [payment.clientId], {
-      event: "payment.not-hired",
-      title: `Your Payment will be refunded, as no Hire happened: ${job.title}`,
-      link: `/jobs/${job.id}`,
-    }),
-  ];
-}
-
-/**
- * Sends the Refund of a Payment that Hired nobody, whole, if the adapter
- * does not have it yet: a repeated event sends it if the first send never
- * reached the adapter. Its events are a Refund's as any other (#132).
- */
-async function refundWhole(ctx: Context, payment: PaymentRow) {
-  await sendRefunds(ctx, payment.id);
-  await emailTells(ctx).catch((error: unknown) => {
-    console.error("Tell emails did not go", error);
-  });
-}
-
-/**
  * The Artisan Fee a Hire fixes: 10%, or 5% if the Client Relationship
- * already has a Completed Engagement (ADR 0009).
+ * already has a Completed Engagement (ADR 0009). One with a Chargeback does
+ * not count (#137): the Client took the money back, and the Admin's decision
+ * made it Completed.
  */
 async function artisanFeePercentOf(ctx: Context, clientId: string, artisanId: string) {
   const [completed] = await ctx.db
@@ -314,6 +270,12 @@ async function artisanFeePercentOf(ctx: Context, clientId: string, artisanId: st
         eq(engagements.clientId, clientId),
         eq(engagements.artisanId, artisanId),
         eq(engagements.state, "completed"),
+        notExists(
+          ctx.db
+            .select({ one: sql`1` })
+            .from(chargebacks)
+            .where(eq(chargebacks.engagementId, engagements.id)),
+        ),
       ),
     )
     .limit(1);
@@ -356,10 +318,14 @@ async function receiptText(
   ].join("\n");
 }
 
-/** The Payment by our id; null if there is none. */
-async function paymentRow(ctx: Context, paymentId: string) {
-  const [row] = await ctx.db.select().from(payments).where(eq(payments.id, paymentId));
-  return row ?? null;
+/** Whether a batch aborted because what it read changed before it ran. */
+function isRaced(error: unknown) {
+  return (
+    causedBy(error, "FOREIGN KEY constraint failed") ||
+    causedBy(error, "UNIQUE constraint failed: engagements") ||
+    causedBy(error, "cannot change that way") ||
+    isAlreadyDecided(error)
+  );
 }
 
 async function emailOf(ctx: Context, accountId: string) {
@@ -369,14 +335,4 @@ async function emailOf(ctx: Context, accountId: string) {
     .where(eq(authUsers.id, accountId));
   if (!row) throw new Error(`Account ${accountId} has no Email`);
   return row.email;
-}
-
-/** Whether a batch aborted because what it read changed before it ran. */
-function isRaced(error: unknown) {
-  return (
-    causedBy(error, "FOREIGN KEY constraint failed") ||
-    causedBy(error, "UNIQUE constraint failed: engagements") ||
-    causedBy(error, "cannot change that way") ||
-    isAlreadyDecided(error)
-  );
 }

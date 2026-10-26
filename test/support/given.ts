@@ -29,7 +29,7 @@ export function given({
   domain: Domain;
   mailer: FakeMailer;
   /** The payment adapter's control that a Payment arrives, in memory or the local app's D1. */
-  payments: Pick<FakePayments, "succeedCollection">;
+  payments: Pick<FakePayments, "succeedCollection" | "openChargeback" | "closeChargeback">;
   /** An Admin already signed in, for a database that has one (a seed of the local app). */
   admin?: { actor: AdminActor };
   /** Where numbering starts, so a seed run again makes new Identity Numbers and addresses. */
@@ -259,6 +259,25 @@ export function given({
     if (!received.ok) throw new Error(received.refusal.message);
   }
 
+  /** The bank charges back the card collection, and its event arrives (#137). */
+  async function chargedBack(collectionId: string) {
+    const received = await domain.system.receivePaymentEvent(
+      await payments.openChargeback(collectionId),
+    );
+    if (!received.ok) throw new Error(received.refusal.message);
+  }
+
+  /** The bank closes the collection's Chargeback, with what it sent back, and its event arrives. */
+  async function chargebackClosed(
+    collectionId: string,
+    closing: Parameters<FakePayments["closeChargeback"]>[1],
+  ) {
+    const received = await domain.system.receivePaymentEvent(
+      await payments.closeChargeback(collectionId, closing),
+    );
+    if (!received.ok) throw new Error(received.refusal.message);
+  }
+
   /** The Client Hires the Quote: a checkout, and its Payment arrives. Its collection's id. */
   async function hired(client: { actor: Actor }, quoteId: string) {
     const collectionId = await checkout(client, quoteId);
@@ -302,6 +321,12 @@ export function given({
     if (marked.value.state !== "made") throw new Error("Expected the Completion to be made");
   }
 
+  /** The Client approves the Completion, making the Engagement Completed. */
+  async function approved(client: { actor: Actor }, engagementId: string) {
+    const approval = await domain.engagements.approve(client.actor, { engagementId });
+    if (!approval.ok) throw new Error(approval.refusal.message);
+  }
+
   return {
     codeSentTo,
     admin,
@@ -319,9 +344,12 @@ export function given({
     checkout,
     paid,
     hired,
+    chargedBack,
+    chargebackClosed,
     engagementOf,
     workStarted,
     markedComplete,
+    approved,
   };
 }
 

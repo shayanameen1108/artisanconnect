@@ -35,7 +35,7 @@ A code sent to an Email to prove its holder has it, at sign-up, recovery, reopen
 _Avoid_: OTP, Verification code
 
 **Suspended**:
-An Account the Admin has stopped from starting new work. Its paid Jobs continue, and the Admin may also hold its Payouts.
+An Account the Admin has stopped from starting new work: it cannot post, Quote, Hire, invite, or be offered a Job. Its Open Jobs close, its Sent Quotes are Withdrawn, and its Profile leaves Browse. It sees the reason; its paid Jobs continue, and the Admin may also hold its Payouts. Lifting it leaves its warnings.
 _Avoid_: Banned, Blocked, Deactivated
 
 **Closed**:
@@ -137,7 +137,7 @@ The Client's answer to a Completion asking the Artisan to put something right. T
 _Avoid_: Rework order, Rejection
 
 **Updated Quote**:
-The Artisan's proposed new Labour and Materials before Completion. Neither line may go down. It applies when the Client pays the difference.
+The Artisan's proposed new Labour and Materials before Completion, one at a time, which the Artisan may withdraw. Neither line may go down. It applies when the Client accepts it by paying the difference; rejected or withdrawn, the price stands. The work is not marked complete while one waits. If it ends while the Client is paying, the Payment is refunded in full.
 _Avoid_: Variation, Change order
 
 **Cancellation**:
@@ -145,11 +145,11 @@ Either Account's ending of an Engagement before Approval. Before Work started th
 _Avoid_: Termination, Withdrawal
 
 **Dispute**:
-A request that the Admin decide how much of a held amount of Labour is released and how much refunded. The Client opens one for a named amount at Completion; the Artisan opens one against a Fix request or a Cancellation. The Admin's decision is final.
+A request that the Admin decide how much of a held amount of Labour is released and how much refunded. The Client opens one for a named amount at Completion, and the rest of the Labour is released at Approval or when the seven days end; the Artisan opens one for all the Labour unreleased, against a Fix request or within a Cancellation's 72 hours. Until the Admin decides, the Client may release what is held and the Artisan may refund it; when nothing is held it is settled. The Admin's decision is final. Afterwards the Engagement is Cancelled again if the Dispute was against a Cancellation, otherwise Completed.
 _Avoid_: Appeal, Complaint, Claim
 
 **Hire Again**:
-The Client's act of opening an Invite-only Job for an Artisan they have a Completed Engagement with, prefilled from it.
+The Client's act of opening an Invite-only Job for an Artisan they have a Completed Engagement with, prefilled from it and inviting only that Artisan. It is not offered on an Engagement the Client charged back.
 _Avoid_: Rehire, Repeat booking
 
 ### Money
@@ -217,11 +217,11 @@ The email the platform sends for each Payment and Refund to the Client, and for 
 _Avoid_: Invoice, Tax invoice
 
 **Review**:
-A 1 to 5 rating with an optional comment, one from each party once an Engagement is Completed, published only once the Admin approves it. Neither can read the other's until both submit or seven days pass.
+A 1 to 5 rating with an optional comment, one from each party once an Engagement is Completed, published only once the Admin approves it. Every Review waits for the Admin's Pre-check, as Held, but its author can never withdraw or change it. Neither can read the other's until both submit or seven days pass.
 _Avoid_: Feedback, Score, Reputation
 
 **Artisan record**:
-The Admin's view of an Artisan's Cancellations, Cancellations by Clients before Work started, and Disputes decided against them. No Account sees it.
+The Admin's view of an Artisan's Cancellations, each with who cancelled and the reason either party gave, Cancellations by Clients before Work started, and Disputes decided against them. No Account sees it.
 _Avoid_: Reliability score, Reputation
 
 **Content check**:
@@ -241,7 +241,7 @@ A pattern of behaviour that detection sends to the Admin as a queue item, with n
 _Avoid_: Flag, Alert
 
 **Report**:
-A signed-in Account's complaint about a Job, Quote, message, Artisan Profile, or Review, which goes to the Admin.
+A signed-in Account's complaint about a Job, Quote, message, Artisan Profile, or Review it can see, once per thing, which goes to the Admin; repeats fold into one queue item. The Admin dismisses it, takes a Job or Profile out of view until an edit the Admin accepts fixes it, or warns or suspends the Account reported, who never learns who reported.
 _Avoid_: Ticket, Flag
 
 **Support request**:
@@ -263,5 +263,5 @@ The pair of one Client and one Artisan.
 _Avoid_: Lock-in, Repeat customer
 
 **Protected Relationship Period**:
-The 365 days after the first Payment in a Client Relationship, during which all work between them belongs on the platform.
+The 365 days after the first Payment in a Client Relationship that Hired an Engagement between them (one that Hired nobody, refunded whole, does not count), during which all work between them belongs on the platform. It never renews; the Admin sees whether it is running for a pair.
 _Avoid_: Lock-in, Exclusivity

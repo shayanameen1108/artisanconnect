@@ -12,9 +12,17 @@ import {
 } from "./completion";
 import { refundByArtisan, refundClocks } from "../refunds";
 import { cancel, cancellationClocks } from "./cancellation";
+import { chargebackItem } from "../chargebacks";
+import { disputeFile, disputeItem, openDispute, releaseHeld } from "./dispute";
 import { artisanRecord } from "./record";
-import type { RefundFields } from "./inputs";
+import type { RefundFields, UpdatedQuoteFields } from "./inputs";
 import { openCheckout } from "./hire";
+import {
+  acceptUpdatedQuote,
+  proposeUpdatedQuote,
+  rejectUpdatedQuote,
+  withdrawUpdatedQuote,
+} from "./updated-quote";
 import { answerNotStarted, claimStarted, markWorkStarted, workStartedClocks } from "./work-started";
 
 // Engagements (#126 on): a Hired Quote's work and money. Hire is the
@@ -23,7 +31,7 @@ import { answerNotStarted, claimStarted, markWorkStarted, workStartedClocks } fr
 export const engagementsSection = defineSection({
   name: "engagements",
   clocks: { ...workStartedClocks, ...completionClocks, ...refundClocks, ...cancellationClocks },
-  queueItems: [heldCompletion, heldFixNote],
+  queueItems: [heldCompletion, heldFixNote, disputeItem, chargebackItem],
   api: (ctx) => ({
     /**
      * Opens a checkout for the Client to Hire a Sent Quote on their Job, by
@@ -71,7 +79,41 @@ export const engagementsSection = defineSection({
      */
     cancel: (actor: Actor, input: { engagementId: string; reason?: string }) =>
       cancel(ctx, actor, input),
-    /** An Artisan's record of Cancellations, for the Admin only; null to anyone else. */
+    /**
+     * The Artisan proposes new Labour and Materials before Completion, in
+     * rands, neither lower (ADR 0019). The Client is told.
+     */
+    proposeUpdatedQuote: (actor: Actor, input: { engagementId: string } & UpdatedQuoteFields) =>
+      proposeUpdatedQuote(ctx, actor, input),
+    /** The Artisan withdraws their proposed Updated Quote. */
+    withdrawUpdatedQuote: (actor: Actor, input: { updatedQuoteId: string }) =>
+      withdrawUpdatedQuote(ctx, actor, input),
+    /** The Client rejects the proposed Updated Quote, and the price stands. */
+    rejectUpdatedQuote: (actor: Actor, input: { updatedQuoteId: string }) =>
+      rejectUpdatedQuote(ctx, actor, input),
+    /**
+     * Opens a checkout for the Client to accept the proposed Updated Quote by
+     * paying the difference plus its Protection Fee, once they acknowledge
+     * the fee is not refunded. It applies when the money arrives.
+     */
+    acceptUpdatedQuote: (
+      actor: Actor,
+      input: { updatedQuoteId: string; feeAcknowledged: boolean },
+    ) => acceptUpdatedQuote(ctx, actor, input),
+    /**
+     * Either party opens a Dispute, with a reason and optional photos: the
+     * Client for a named amount of the Labour, in rands, at Awaiting
+     * approval; the Artisan for all the Labour unreleased, against a Fix
+     * request or within a Cancellation's 72 hours. The Admin decides it.
+     */
+    dispute: (
+      actor: Actor,
+      input: { engagementId: string; amount?: string; reason: string; photos?: Blob[] },
+    ) => openDispute(ctx, actor, input),
+    /** The Client releases an amount of the Labour a Dispute holds, in rands, to settle it. */
+    releaseHeld: (actor: Actor, input: { engagementId: string; amount: string }) =>
+      releaseHeld(ctx, actor, input),
+    /** An Artisan's record of Cancellations and Disputes, for the Admin only; null to anyone else. */
     artisanRecord: async (viewer: Actor, input: { artisanId: string }) =>
       viewer.kind === "admin" ? artisanRecord(ctx, input.artisanId) : null,
     /** A Completion's photo or document, to whoever may see it; null to anyone else. */
@@ -79,5 +121,10 @@ export const engagementsSection = defineSection({
       viewer: Actor,
       input: { completionId: string; fileId: string; thumbnail?: boolean },
     ) => completionFile(ctx, viewer, input),
+    /** A Dispute's photo, to whoever may see it; null to anyone else. */
+    disputeFile: (
+      viewer: Actor,
+      input: { disputeId: string; fileId: string; thumbnail?: boolean },
+    ) => disputeFile(ctx, viewer, input),
   }),
 });

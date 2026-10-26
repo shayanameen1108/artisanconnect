@@ -10,9 +10,9 @@ import { ledgerEntries } from "./schema";
 
 /** What a ledger row records. Each later ticket adds the kinds it writes. */
 export const LEDGER_KINDS = {
-  /** The Hired Quote's Labour, paid in. */
+  /** The Hired Quote's Labour, or what an Updated Quote adds to it, paid in (#134). */
   labourIn: "payment.labour",
-  /** The Hired Quote's Materials, paid in. */
+  /** The Hired Quote's Materials, or what an Updated Quote adds to them, paid in (#134). */
   materialsIn: "payment.materials",
   /** The Protection Fee on a Payment, kept whatever happens next (ADR 0008). */
   protectionFeeIn: "payment.protection-fee",
@@ -30,6 +30,8 @@ export const LEDGER_KINDS = {
   refundFailed: "refund.failed",
   /** A failed Refund the Admin paid by bank transfer: no longer owed. */
   refundPaidByHand: "refund.paid-by-hand",
+  /** A waiting Refund the bank sent back to the Client by a Chargeback instead: no longer owed (#137). */
+  refundChargedBack: "refund.charged-back",
   /** The Materials released at Work started, before the Artisan Fee (ADR 0006). */
   materialsReleased: "release.materials",
   /** The Labour released at Approval, before the Artisan Fee (ADR 0006, #130). */
@@ -46,6 +48,22 @@ export const LEDGER_KINDS = {
   payoutRefused: "payout.refused",
   /** A paid Payout the bank sent back: owed to the Artisan again (#129). */
   payoutSentBack: "payout.sent-back",
+  /** Unreleased Labour a Dispute holds when it opens (#135): no money moves. */
+  disputeHeld: "dispute.held",
+  /** Held Labour released, by the Client or the Admin's split, beside its Release's rows. */
+  disputeReleased: "dispute.released",
+  /** Held Labour refunded, by the Artisan or the Admin's split, beside its Refund's rows. */
+  disputeRefunded: "dispute.refunded",
+  /** What the bank disputes when it opens a Chargeback (#137): no money moves. */
+  chargebackOpened: "chargeback.opened",
+  /** What the bank sent back to the Client when it closed a Chargeback. */
+  chargebackReversed: "chargeback.reversed",
+  /** Unreleased Labour the Admin left with a Chargeback: the Client's, by the bank. */
+  labourChargedBack: "chargeback.labour",
+  /** Unreleased Materials the Admin left with a Chargeback: the Client's, by the bank. */
+  materialsChargedBack: "chargeback.materials",
+  /** Of what the bank sent back, what the platform no longer held: its loss. */
+  chargebackLoss: "chargeback.loss",
 } as const;
 
 export type LedgerKind = (typeof LEDGER_KINDS)[keyof typeof LEDGER_KINDS];
@@ -97,9 +115,36 @@ export async function commitFromUnreleased(ctx: Context, writes: () => Promise<W
   throw new Error("The money unreleased kept changing while it was released or refunded");
 }
 
-/** Whether a batch aborted as it would take more of a line than is unreleased. */
+/**
+ * Whether a batch aborted as the money unreleased changed since it was read:
+ * it would take more of a line than is unreleased, or of a Dispute than it
+ * holds (#135), or a Release of Materials would leave some unreleased, as
+ * when an Updated Quote's Payment paid more in meanwhile (#134).
+ */
 export function isOverdrawn(error: unknown) {
-  return causedBy(error, "more than is unreleased");
+  return (
+    causedBy(error, "more than is unreleased") ||
+    causedBy(error, "Materials left unreleased") ||
+    causedBy(error, "more than is held")
+  );
+}
+
+/**
+ * The SQL that is true while the Labour and Materials paid in to the
+ * Engagement are these: no Updated Quote's Payment arrived since they were
+ * read (#134).
+ */
+export function paidInIs(ctx: Context, engagementId: string, cents: number) {
+  return sql`(select coalesce(sum(${ledgerEntries.amountCents}), 0) from ${ledgerEntries} where ${ledgerEntries.engagementId} = ${engagementId} and ${ledgerEntries.kind} in (${LEDGER_KINDS.labourIn}, ${LEDGER_KINDS.materialsIn})) = ${cents}`;
+}
+
+/**
+ * The SQL that is true while the Labour of the Engagement not yet released is
+ * this much: no Release or Refund of it, nor Payment of more, since it was
+ * read (#135).
+ */
+export function labourUnreleasedIs(ctx: Context, engagementId: string, cents: number) {
+  return sql`(select coalesce(sum(case when ${ledgerEntries.kind} = ${LEDGER_KINDS.labourIn} then ${ledgerEntries.amountCents} else -${ledgerEntries.amountCents} end), 0) from ${ledgerEntries} where ${ledgerEntries.engagementId} = ${engagementId} and ${ledgerEntries.kind} in (${LEDGER_KINDS.labourIn}, ${LEDGER_KINDS.labourReleased}, ${LEDGER_KINDS.labourRefunded}, ${LEDGER_KINDS.labourChargedBack})) = ${cents}`;
 }
 
 /**
@@ -151,8 +196,9 @@ export function paymentInRows(
 
 /**
  * An Engagement's money, from its ledger rows: what was paid in for the
- * Hired Quote (the Protection Fee apart), released, refunded, and not yet
- * released, each of Labour and Materials too.
+ * Hired Quote and any Updated Quotes (the Protection Fee apart), released,
+ * refunded, left with a Chargeback, and not yet released, each of Labour and
+ * Materials too, and how much of the Labour not yet released a Dispute holds.
  */
 export async function engagementMoney(ctx: Context, engagementId: string) {
   const rows = await ctx.db
@@ -161,38 +207,57 @@ export async function engagementMoney(ctx: Context, engagementId: string) {
     .where(eq(ledgerEntries.engagementId, engagementId))
     .groupBy(ledgerEntries.kind);
   const sum = (kind: LedgerKind) => rows.find((row) => row.kind === kind)?.cents ?? 0;
-  const part = (inKind: LedgerKind, releasedKind: LedgerKind, refundedKind: LedgerKind) => {
-    const [paidInCents, releasedCents, refundedCents] = [inKind, releasedKind, refundedKind].map(
-      sum,
-    );
+  const part = (
+    inKind: LedgerKind,
+    releasedKind: LedgerKind,
+    refundedKind: LedgerKind,
+    chargedBackKind: LedgerKind,
+  ) => {
+    const [paidInCents, releasedCents, refundedCents, chargedBackCents] = [
+      inKind,
+      releasedKind,
+      refundedKind,
+      chargedBackKind,
+    ].map(sum);
     // What a Release or a Refund of it may take now.
     return {
       paidInCents,
       releasedCents,
       refundedCents,
-      unreleasedCents: paidInCents - releasedCents - refundedCents,
+      chargedBackCents,
+      unreleasedCents: paidInCents - releasedCents - refundedCents - chargedBackCents,
     };
   };
   const labour = part(
     LEDGER_KINDS.labourIn,
     LEDGER_KINDS.labourReleased,
     LEDGER_KINDS.labourRefunded,
+    LEDGER_KINDS.labourChargedBack,
   );
   const materials = part(
     LEDGER_KINDS.materialsIn,
     LEDGER_KINDS.materialsReleased,
     LEDGER_KINDS.materialsRefunded,
+    LEDGER_KINDS.materialsChargedBack,
   );
   const paidInCents = labour.paidInCents + materials.paidInCents;
   const releasedCents = labour.releasedCents + materials.releasedCents;
   const refundedCents = labour.refundedCents + materials.refundedCents;
+  const chargedBackCents = labour.chargedBackCents + materials.chargedBackCents;
   return {
     labour,
     materials,
     paidInCents,
     releasedCents,
     refundedCents,
-    unreleasedCents: paidInCents - releasedCents - refundedCents,
+    /** What the Admin left with a Chargeback, the Client's by the bank (#137). */
+    chargedBackCents,
+    unreleasedCents: paidInCents - releasedCents - refundedCents - chargedBackCents,
+    /** Of the Labour not yet released, what a Dispute holds (#135). */
+    heldCents:
+      sum(LEDGER_KINDS.disputeHeld) -
+      sum(LEDGER_KINDS.disputeReleased) -
+      sum(LEDGER_KINDS.disputeRefunded),
     protectionFeeCents: sum(LEDGER_KINDS.protectionFeeIn),
   };
 }

@@ -2,7 +2,8 @@ import * as z from "zod";
 import { rands } from "../quotes/inputs";
 import type { ServiceCategory } from "../service-categories";
 
-// What a Completion, a Fix request, a Refund, and a Cancellation take, shared with the web app's forms.
+// What a Completion, a Fix request, a Refund, a Cancellation, an Updated
+// Quote, and a Dispute take, shared with the web app's forms.
 // Nothing here may import what only runs on the server.
 
 /** The most characters a Completion's note or a Fix request's note may have. */
@@ -10,6 +11,12 @@ export const NOTE_MAX = 2000;
 
 /** The most characters a Cancellation's reason may have. */
 export const CANCELLATION_REASON_MAX = 500;
+
+/** The most characters a Dispute's reason may have. */
+export const DISPUTE_REASON_MAX = 2000;
+
+/** The most photos a Dispute may hold. */
+export const DISPUTE_PHOTOS_MAX = 10;
 
 /** The most after-work photos a Completion may hold. */
 export const COMPLETION_PHOTOS_MAX = 10;
@@ -69,3 +76,16 @@ function line(label: string) {
     rands(label).optional(),
   );
 }
+
+/** An Updated Quote as the Artisan names it: the new Labour and Materials, in rands. */
+export const updatedQuoteFields = z.object({
+  labour: rands("Labour"),
+  materials: rands("Materials"),
+});
+
+export type UpdatedQuoteFields = z.input<typeof updatedQuoteFields>;
+
+/** An amount of Labour as a party names it in a Dispute, in rands, above zero. */
+export const labourAmount = rands("amount").refine((cents) => cents > 0, {
+  error: "Name an amount above zero.",
+});

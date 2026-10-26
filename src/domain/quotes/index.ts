@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, not, sql } from "drizzle-orm";
 import { accountIdOf, type Actor } from "../actor";
 import { firstProblem } from "../accounts/inputs";
 import { publicName } from "../accounts/names";
@@ -8,7 +8,7 @@ import { heldInvitation } from "../invitations";
 import { JOB_AS_ARTISAN_COLUMNS, jobAsArtisanView, jobRow } from "../jobs/rows";
 import { heldMatch } from "../matches";
 import { ok, refuse } from "../result";
-import { accounts, jobs, quotes, regions, suburbs } from "../schema";
+import { accounts, engagements, jobs, quotes, regions, suburbs } from "../schema";
 import { defineSection } from "../section";
 import { badgesOf } from "../verification";
 import { protectionFeeCents } from "../money";
@@ -45,6 +45,9 @@ import {
   vatNumberOf,
   type QuoteRow,
 } from "./rows";
+import { isSuspended, suspendedNow } from "../standing";
+import { completedCounts } from "../engagements/rows";
+import { summariesOf } from "../reviews/rows";
 
 // Quotes (#124, ADR 0002, ADR 0004): an Artisan holding a Job Match or an
 // Invitation sends one fixed-price Quote on an Open Job. The Content check
@@ -63,6 +66,8 @@ export const quotesSection = defineSection({
       if (
         !job ||
         job.state !== "open" ||
+        // One out of view is nobody's to see but its Client's (#136).
+        job.outOfViewSince !== null ||
         !(await isOfferedOrInvited(ctx, job.id, actor.accountId))
       ) {
         return noJob();
@@ -121,7 +126,8 @@ export const quotesSection = defineSection({
             ctx,
             quotes,
             { ...quote, state: "sent", sentAt: now, expiresAt },
-            takesQuotes(ctx, job.id),
+            // Not if a Suspension landed since it was asked above.
+            and(takesQuotes(ctx, job.id), not(suspendedNow(ctx, actor.accountId)))!,
           ).returning({ id: quotes.id }),
           startClock(ctx, { kind: EXPIRY_CLOCK, subjectId: quote.id, dueAt: expiresAt }),
           // The first Quote Sent opens the Conversation, unless an Invitation did.
@@ -140,6 +146,9 @@ export const quotesSection = defineSection({
           ),
         ]);
         if (sent.length === 0) {
+          if (await isSuspended(ctx, actor.accountId)) {
+            return refuse("suspended", problemMessage("suspended", job.category));
+          }
           return (await jobRow(ctx, job.id))?.state === "open" ? jobFull() : noJob();
         }
       } catch (error) {
@@ -265,16 +274,18 @@ export const quotesSection = defineSection({
 
     /**
      * The Artisan's Quotes being checked, Sent, or Hired, the newest first,
-     * each with its Job as they see it in a list: the Region, never the address.
+     * each with its Job as they see it in a list: the Region, never the
+     * address; and a Hired one's Engagement's state.
      */
     async mine(viewer: Actor) {
       if (viewer.kind !== "artisan") return null;
       const rows = await ctx.db
-        .select({ ...JOB_AS_ARTISAN_COLUMNS, quote: quotes })
+        .select({ ...JOB_AS_ARTISAN_COLUMNS, quote: quotes, engagementState: engagements.state })
         .from(quotes)
         .innerJoin(jobs, eq(jobs.id, quotes.jobId))
         .leftJoin(suburbs, eq(suburbs.id, jobs.suburbId))
         .leftJoin(regions, eq(regions.id, suburbs.regionId))
+        .leftJoin(engagements, eq(engagements.quoteId, quotes.id))
         .where(
           and(
             eq(quotes.artisanId, viewer.accountId),
@@ -282,10 +293,11 @@ export const quotesSection = defineSection({
           ),
         )
         .orderBy(desc(quotes.createdAt), desc(sql.raw(`"quotes"."rowid"`)));
-      return rows.map(({ quote, ...job }) => ({
+      return rows.map(({ quote, engagementState, ...job }) => ({
         ...jobAsArtisanView(job),
         quoteId: quote.id,
         state: quote.state as "held" | "sent" | "hired",
+        engagementState,
         totalCents: quote.labourCents + quote.materialsCents,
         sentAt: quote.sentAt,
         expiresAt: quote.expiresAt,
@@ -311,11 +323,14 @@ export const quotesSection = defineSection({
         .innerJoin(accounts, eq(accounts.id, quotes.artisanId))
         .where(and(eq(quotes.jobId, job.id), inArray(quotes.state, COUNTED_STATES)))
         .orderBy(asc(quotes.sentAt), asc(sql.raw(`"quotes"."rowid"`)));
+      const artisanIds = [...new Set(rows.map((row) => row.quote.artisanId))];
+      const [reviewed, completed] = await Promise.all([
+        summariesOf(ctx, artisanIds),
+        completedCounts(ctx, "artisanId", artisanIds),
+      ]);
       const badges = new Map(
         await Promise.all(
-          [...new Set(rows.map((row) => row.quote.artisanId))].map(
-            async (artisanId) => [artisanId, await badgesOf(ctx, artisanId)] as const,
-          ),
+          artisanIds.map(async (artisanId) => [artisanId, await badgesOf(ctx, artisanId)] as const),
         ),
       );
       return rows.map(({ quote, namesShown, ...names }) => {
@@ -329,9 +344,8 @@ export const quotesSection = defineSection({
             artisanId: quote.artisanId,
             // Names the Content check has not passed are nobody else's to see.
             publicName: namesShown ? publicName(names) : null,
-            // Reviews and Completed Engagements come with their tickets (#138, #130).
-            reviews: { average: null, count: 0 },
-            completed: 0,
+            reviews: reviewed.get(quote.artisanId),
+            completed: completed.get(quote.artisanId),
             badges: (badges.get(quote.artisanId) ?? []).filter(
               (badge) => badge.category === null || badge.category === job.category,
             ),

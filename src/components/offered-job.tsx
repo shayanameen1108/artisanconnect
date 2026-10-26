@@ -10,17 +10,22 @@ import { Details, Fact } from "@/components/job-details";
 import { NextStepCard, Page, Refusal } from "@/components/page";
 import { useAction } from "@/components/use-action";
 import { QuoteForm } from "@/components/quote-form";
+import { ReportAction } from "@/components/report";
+import { EngagementReviewsCard, ReviewList, WriteReview } from "@/components/reviews";
 import { QuoteFacts } from "@/components/quotes";
 import {
   ActivityCard,
   CancelAction,
   CompletionActions,
   CompletionCard,
+  DisputeActions,
+  DisputeCard,
   EngagementNextStep,
   HiredQuoteCard,
   MoneyCard,
   PaymentsCard,
   StartActions,
+  UpdatedQuoteCard,
 } from "@/components/engagement";
 import {
   Messages,
@@ -34,6 +39,7 @@ import type { getJob } from "@/web/jobs";
 import { passInvitation } from "@/web/invitations";
 import { passMatch } from "@/web/matches";
 import { reviseQuote, sendQuote, withdrawQuoteBeingChecked, withdrawQuote } from "@/web/quotes";
+import { getClientReviews } from "@/web/reviews";
 
 /** A Job as an Artisan offered it sees it. */
 export type OfferedJobView = Extract<Awaited<ReturnType<typeof getJob>>, { as: "artisan" }>;
@@ -48,7 +54,8 @@ const tq = copy.quote;
  * or an Invitation, and their Quote once they have sent one. Either may be
  * passed before a Quote, telling nobody. Messages holds their Conversation
  * with the Client, once an Invitation or their Quote opened it. Once Hired,
- * it is the Engagement, with the address (#126).
+ * it is the Engagement, with the address (#126). Reviews of the Client show
+ * beside it (#138).
  */
 export function OfferedJob({
   job,
@@ -79,13 +86,15 @@ export function OfferedJob({
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{job.title}</h1>
           <Badge>
-            {quote && quote.state !== "refused"
-              ? tq.states[quote.state]
-              : job.state !== "open"
-                ? copy.jobs.states[job.state]
-                : invited
-                  ? t.invitationBadge
-                  : t.badge}
+            {engagement
+              ? copy.engagement.states[engagement.state]
+              : quote && quote.state !== "refused"
+                ? tq.states[quote.state]
+                : job.state !== "open"
+                  ? copy.jobs.states[job.state]
+                  : invited
+                    ? t.invitationBadge
+                    : t.badge}
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -106,8 +115,17 @@ export function OfferedJob({
                   <EngagementNextStep engagement={engagement} asClient={false}>
                     <StartActions engagement={engagement} asClient={false} />
                     <CompletionActions engagement={engagement} asClient={false} />
+                    <DisputeActions engagement={engagement} asClient={false} />
                     <CancelAction engagement={engagement} asClient={false} />
+                    <WriteReview
+                      engagementId={engagement.engagementId}
+                      reviews={engagement.reviews}
+                      asClient={false}
+                    />
                   </EngagementNextStep>
+                  <EngagementReviewsCard reviews={engagement.reviews} asClient={false} />
+                  <UpdatedQuoteCard engagement={engagement} asClient={false} />
+                  <DisputeCard engagement={engagement} asClient={false} />
                   <CompletionCard engagement={engagement} />
                   <PaymentsCard engagement={engagement} />
                   <ActivityCard engagement={engagement} />
@@ -147,6 +165,19 @@ export function OfferedJob({
                 </CardContent>
               </Card>
               <Card size="sm">
+                <CardHeader>
+                  <CardTitle>{copy.review.ofClient}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ReviewList
+                    first={job.client.reviews}
+                    load={(page) => getClientReviews({ data: { jobId: job.jobId, page } })}
+                    canReport
+                    empty={copy.review.noClientReviews}
+                  />
+                </CardContent>
+              </Card>
+              <Card size="sm">
                 <CardContent>
                   <dl className="space-y-3 text-sm">
                     <Fact label={copy.job.category}>
@@ -160,6 +191,7 @@ export function OfferedJob({
                       </Fact>
                     )}
                   </dl>
+                  <ReportAction about={{ kind: "job", id: job.jobId }} label={copy.report.job} />
                 </CardContent>
               </Card>
               {engagement && (

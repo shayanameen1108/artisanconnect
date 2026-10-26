@@ -41,7 +41,10 @@ import { Route as AdminFilesTokenRouteImport } from './routes/admin/files.$token
 import { Route as AdminItemsItemIdRouteImport } from './routes/admin/items.$itemId'
 import { Route as AdminPayoutsIndexRouteImport } from './routes/admin/payouts.index'
 import { Route as AdminPayoutsArtisanIdRouteImport } from './routes/admin/payouts.$artisanId'
+import { Route as AdminPeopleIndexRouteImport } from './routes/admin/people.index'
+import { Route as AdminPeopleAccountIdRouteImport } from './routes/admin/people.$accountId'
 import { Route as CompletionFilesCompletionIdFileIdRouteImport } from './routes/completion-files.$completionId.$fileId'
+import { Route as DisputeFilesDisputeIdFileIdRouteImport } from './routes/dispute-files.$disputeId.$fileId'
 import { Route as JobPhotosJobIdPhotoIdRouteImport } from './routes/job-photos.$jobId.$photoId'
 import { Route as MessageFilesMessageIdFileIdRouteImport } from './routes/message-files.$messageId.$fileId'
 import { Route as ProfilePhotosArtisanIdPhotoIdRouteImport } from './routes/profile-photos.$artisanId.$photoId'
@@ -207,10 +210,26 @@ const AdminPayoutsArtisanIdRoute = AdminPayoutsArtisanIdRouteImport.update({
   path: '/admin/payouts/$artisanId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminPeopleIndexRoute = AdminPeopleIndexRouteImport.update({
+  id: '/admin/people/',
+  path: '/admin/people/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPeopleAccountIdRoute = AdminPeopleAccountIdRouteImport.update({
+  id: '/admin/people/$accountId',
+  path: '/admin/people/$accountId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CompletionFilesCompletionIdFileIdRoute =
   CompletionFilesCompletionIdFileIdRouteImport.update({
     id: '/completion-files/$completionId/$fileId',
     path: '/completion-files/$completionId/$fileId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DisputeFilesDisputeIdFileIdRoute =
+  DisputeFilesDisputeIdFileIdRouteImport.update({
+    id: '/dispute-files/$disputeId/$fileId',
+    path: '/dispute-files/$disputeId/$fileId',
     getParentRoute: () => rootRouteImport,
   } as any)
 const JobPhotosJobIdPhotoIdRoute = JobPhotosJobIdPhotoIdRouteImport.update({
@@ -263,11 +282,14 @@ export interface FileRoutesByFullPath {
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
   '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/admin/people/$accountId': typeof AdminPeopleAccountIdRoute
   '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/dispute-files/$disputeId/$fileId': typeof DisputeFilesDisputeIdFileIdRoute
   '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
   '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
   '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
   '/admin/payouts/': typeof AdminPayoutsIndexRoute
+  '/admin/people/': typeof AdminPeopleIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -301,11 +323,14 @@ export interface FileRoutesByTo {
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
   '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/admin/people/$accountId': typeof AdminPeopleAccountIdRoute
   '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/dispute-files/$disputeId/$fileId': typeof DisputeFilesDisputeIdFileIdRoute
   '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
   '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
   '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
   '/admin/payouts': typeof AdminPayoutsIndexRoute
+  '/admin/people': typeof AdminPeopleIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -340,11 +365,14 @@ export interface FileRoutesById {
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
   '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/admin/people/$accountId': typeof AdminPeopleAccountIdRoute
   '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/dispute-files/$disputeId/$fileId': typeof DisputeFilesDisputeIdFileIdRoute
   '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
   '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
   '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
   '/admin/payouts/': typeof AdminPayoutsIndexRoute
+  '/admin/people/': typeof AdminPeopleIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -380,11 +408,14 @@ export interface FileRouteTypes {
     | '/admin/files/$token'
     | '/admin/items/$itemId'
     | '/admin/payouts/$artisanId'
+    | '/admin/people/$accountId'
     | '/completion-files/$completionId/$fileId'
+    | '/dispute-files/$disputeId/$fileId'
     | '/job-photos/$jobId/$photoId'
     | '/message-files/$messageId/$fileId'
     | '/profile-photos/$artisanId/$photoId'
     | '/admin/payouts/'
+    | '/admin/people/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -418,11 +449,14 @@ export interface FileRouteTypes {
     | '/admin/files/$token'
     | '/admin/items/$itemId'
     | '/admin/payouts/$artisanId'
+    | '/admin/people/$accountId'
     | '/completion-files/$completionId/$fileId'
+    | '/dispute-files/$disputeId/$fileId'
     | '/job-photos/$jobId/$photoId'
     | '/message-files/$messageId/$fileId'
     | '/profile-photos/$artisanId/$photoId'
     | '/admin/payouts'
+    | '/admin/people'
   id:
     | '__root__'
     | '/'
@@ -456,11 +490,14 @@ export interface FileRouteTypes {
     | '/admin/files/$token'
     | '/admin/items/$itemId'
     | '/admin/payouts/$artisanId'
+    | '/admin/people/$accountId'
     | '/completion-files/$completionId/$fileId'
+    | '/dispute-files/$disputeId/$fileId'
     | '/job-photos/$jobId/$photoId'
     | '/message-files/$messageId/$fileId'
     | '/profile-photos/$artisanId/$photoId'
     | '/admin/payouts/'
+    | '/admin/people/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -495,11 +532,14 @@ export interface RootRouteChildren {
   AdminFilesTokenRoute: typeof AdminFilesTokenRoute
   AdminItemsItemIdRoute: typeof AdminItemsItemIdRoute
   AdminPayoutsArtisanIdRoute: typeof AdminPayoutsArtisanIdRoute
+  AdminPeopleAccountIdRoute: typeof AdminPeopleAccountIdRoute
   CompletionFilesCompletionIdFileIdRoute: typeof CompletionFilesCompletionIdFileIdRoute
+  DisputeFilesDisputeIdFileIdRoute: typeof DisputeFilesDisputeIdFileIdRoute
   JobPhotosJobIdPhotoIdRoute: typeof JobPhotosJobIdPhotoIdRoute
   MessageFilesMessageIdFileIdRoute: typeof MessageFilesMessageIdFileIdRoute
   ProfilePhotosArtisanIdPhotoIdRoute: typeof ProfilePhotosArtisanIdPhotoIdRoute
   AdminPayoutsIndexRoute: typeof AdminPayoutsIndexRoute
+  AdminPeopleIndexRoute: typeof AdminPeopleIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -728,11 +768,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminPayoutsArtisanIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/people/': {
+      id: '/admin/people/'
+      path: '/admin/people'
+      fullPath: '/admin/people/'
+      preLoaderRoute: typeof AdminPeopleIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/people/$accountId': {
+      id: '/admin/people/$accountId'
+      path: '/admin/people/$accountId'
+      fullPath: '/admin/people/$accountId'
+      preLoaderRoute: typeof AdminPeopleAccountIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/completion-files/$completionId/$fileId': {
       id: '/completion-files/$completionId/$fileId'
       path: '/completion-files/$completionId/$fileId'
       fullPath: '/completion-files/$completionId/$fileId'
       preLoaderRoute: typeof CompletionFilesCompletionIdFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dispute-files/$disputeId/$fileId': {
+      id: '/dispute-files/$disputeId/$fileId'
+      path: '/dispute-files/$disputeId/$fileId'
+      fullPath: '/dispute-files/$disputeId/$fileId'
+      preLoaderRoute: typeof DisputeFilesDisputeIdFileIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/job-photos/$jobId/$photoId': {
@@ -791,12 +852,15 @@ const rootRouteChildren: RootRouteChildren = {
   AdminFilesTokenRoute: AdminFilesTokenRoute,
   AdminItemsItemIdRoute: AdminItemsItemIdRoute,
   AdminPayoutsArtisanIdRoute: AdminPayoutsArtisanIdRoute,
+  AdminPeopleAccountIdRoute: AdminPeopleAccountIdRoute,
   CompletionFilesCompletionIdFileIdRoute:
     CompletionFilesCompletionIdFileIdRoute,
+  DisputeFilesDisputeIdFileIdRoute: DisputeFilesDisputeIdFileIdRoute,
   JobPhotosJobIdPhotoIdRoute: JobPhotosJobIdPhotoIdRoute,
   MessageFilesMessageIdFileIdRoute: MessageFilesMessageIdFileIdRoute,
   ProfilePhotosArtisanIdPhotoIdRoute: ProfilePhotosArtisanIdPhotoIdRoute,
   AdminPayoutsIndexRoute: AdminPayoutsIndexRoute,
+  AdminPeopleIndexRoute: AdminPeopleIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

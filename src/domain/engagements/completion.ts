@@ -20,8 +20,10 @@ import {
 } from "../ledger";
 import type { Block } from "../queues";
 import { accountSidebar } from "../quotes/held";
+import { formatRands } from "../money";
 import { ok, refuse, type Result } from "../result";
 import { formatTime } from "../sa-days";
+import { windowOpensWrites } from "../reviews/window";
 import {
   completions,
   engagements,
@@ -42,6 +44,9 @@ import type { CheckKind } from "../verification/checks";
 import { found } from "../verification/reading";
 import { CERTIFICATES, certificateNeeded, NOTE_MAX, type CertificateKind } from "./inputs";
 import { engagementRow, type EngagementRow } from "./rows";
+import { noneProposed, proposedOf, WAITING_FOR_CLIENT } from "./updated-quote-rows";
+import { disputeOf, openDisputeOf } from "./dispute";
+import { frozenRefusal, isFrozen, notFrozen } from "../chargebacks";
 
 // Completion, Approval, and Fix requests (#130, ADR 0006). After Work started
 // the Artisan marks the work complete, with a note, after-work photos, and any
@@ -109,11 +114,16 @@ export async function markComplete(
   }
   const completable = canMarkComplete(engagement);
   if (!completable.ok) return completable;
+  if (await isFrozen(ctx, engagement.id)) return frozenRefusal();
   if (await heldCompletionOf(ctx, engagement.id)) {
     return refuse(
       "being-checked",
       "Your Completion is being checked. Withdraw it to send another.",
     );
+  }
+  // Only before Completion may an Updated Quote apply (#134), so it is answered or withdrawn first.
+  if (await proposedOf(ctx, engagement.id)) {
+    return refuse("updated-quote-proposed", WAITING_FOR_CLIENT);
   }
   const note = input.note.trim();
   if (!note) return refuse("invalid", "Write a note on what was done.");
@@ -191,7 +201,10 @@ export async function markComplete(
       fixNoteState: null,
       fixNoteHeldFor: null,
     };
-    const stillCompletable = engagementIn(ctx, engagement.id, COMPLETABLE);
+    const stillCompletable = and(
+      engagementIn(ctx, engagement.id, COMPLETABLE),
+      noneProposed(ctx, engagement.id),
+    )!;
     const held = reasons.length > 0;
     const [inserted] = await ctx.db.batch([
       insertWhile(
@@ -210,9 +223,12 @@ export async function markComplete(
           ]
         : madeWrites(ctx, actor, engagement, completion.id, now)),
     ]);
-    // The Engagement moved on between the read and the batch.
+    // The Engagement moved on between the read and the batch, or an Updated Quote was proposed.
     if (inserted.length === 0) {
       await discardFiles(ctx, stored);
+      if (await proposedOf(ctx, engagement.id)) {
+        return refuse("updated-quote-proposed", WAITING_FOR_CLIENT);
+      }
       const standing = canMarkComplete((await engagementRow(ctx, engagement.id))!);
       return standing.ok
         ? refuse("not-open", "This Engagement can no longer be marked complete.")
@@ -278,6 +294,7 @@ export async function approve(ctx: Context, actor: Actor, input: { engagementId:
         : "There is no Completion to approve.",
     );
   }
+  if (await isFrozen(ctx, engagement.id)) return frozenRefusal();
   await commitFromUnreleased(ctx, () =>
     approvalWrites(ctx, actor, engagement, completion, "approved"),
   );
@@ -306,6 +323,10 @@ export async function requestFix(
   if (actor.kind !== "client" || !engagement || engagement.clientId !== actor.accountId) {
     return notFound();
   }
+  // Not while Disputed: Approval of what the Dispute does not hold is the Client's only answer then.
+  if (engagement.state === "disputed") {
+    return refuse("not-awaiting", "This Engagement is Disputed: the Admin decides it.");
+  }
   const completion = await unansweredOf(ctx, engagement);
   if (!completion) {
     return refuse(
@@ -317,6 +338,7 @@ export async function requestFix(
           : "There is no Completion to answer.",
     );
   }
+  if (await isFrozen(ctx, engagement.id)) return frozenRefusal();
   const note = input.note.trim();
   if (!note) return refuse("invalid", "Write what needs fixing.");
   if (note.length > NOTE_MAX) {
@@ -401,8 +423,9 @@ export async function requestFix(
 
 /**
  * A file of a Completion, or a photo's thumbnail: to its Artisan, to its
- * Client once it is made, and to the Admin for a Completion that was Held,
- * which they read to decide it. Null for anyone else.
+ * Client once it is made, and to the Admin for a Completion that was Held, or
+ * of an Engagement with a Dispute, which they read to decide it (#135). Null
+ * for anyone else.
  */
 export async function completionFile(
   ctx: Context,
@@ -423,7 +446,7 @@ export async function completionFile(
   const { completion, engagement } = row;
   const sees =
     viewer.kind === "admin"
-      ? completion.heldFor !== null
+      ? completion.heldFor !== null || (await disputeOf(ctx, engagement.id)) !== null
       : viewer.kind === "artisan"
         ? viewer.accountId === engagement.artisanId
         : viewer.kind === "client" &&
@@ -454,7 +477,9 @@ export async function completionsOf(ctx: Context, engagementId: string) {
 /**
  * Makes a Completion's silence Approval seven days after it was made, once
  * the Client has not answered it. Not while a Chargeback freezes the
- * Engagement, too, once there are Chargebacks (#137).
+ * Engagement (#137): it does nothing then, as its writes land only while it
+ * is not frozen, and the Admin's decision of the Chargeback ends the
+ * Engagement.
  */
 const approvalBySilence: ClockHandler = async (ctx, clock) => {
   const found = await answerable(ctx, clock.subjectId);
@@ -464,18 +489,25 @@ const approvalBySilence: ClockHandler = async (ctx, clock) => {
   return approvalWrites(ctx, system, found.engagement, found.completion, "approved-by-silence");
 };
 
-/** Reminds the Client, 24 hours before, that their silence will be Approval. */
+/**
+ * Reminds the Client, 24 hours before, that their silence will be Approval,
+ * or, while their Dispute holds part of the Labour, will release the rest.
+ */
 const approvalReminder: ClockHandler = async (ctx, clock) => {
   const found = await answerable(ctx, clock.subjectId);
   if (!found) return [];
   const { engagement, completion } = found;
+  const at = formatTime(approvalAt(completion.madeAt!));
+  const disputed = engagement.state === "disputed";
   return tellWhile(
     ctx,
     system,
     [engagement.clientId],
     {
       event: "engagement.approval-reminder",
-      title: `Approved by silence in 24 hours, at ${formatTime(approvalAt(completion.madeAt!))}. Approve or ask for a fix before then: ${engagement.jobTitle}`,
+      title: disputed
+        ? `The Labour not in Dispute is released to the Artisan in 24 hours, at ${at}: ${engagement.jobTitle}`
+        : `Approved by silence in 24 hours, at ${at}. Approve or ask for a fix before then: ${engagement.jobTitle}`,
       link: `/jobs/${engagement.jobId}`,
     },
     and(
@@ -485,7 +517,7 @@ const approvalReminder: ClockHandler = async (ctx, clock) => {
           .from(completions)
           .where(unanswered(completion.id)),
       ),
-      engagementIn(ctx, engagement.id, ["awaiting-approval"]),
+      engagementIn(ctx, engagement.id, [disputed ? "disputed" : "awaiting-approval"]),
     )!,
   );
 };
@@ -530,7 +562,9 @@ export const heldCompletion = defineHeldKind("held.completion", {
   told: {
     async released(ctx, subjectId) {
       const found = await withEngagement(ctx, subjectId);
-      return found && canMarkComplete(found.engagement).ok
+      return found &&
+        canMarkComplete(found.engagement).ok &&
+        !(await isFrozen(ctx, found.engagement.id))
         ? "Your Completion is checked, and the Client was told"
         : "Your Completion is checked, but the work can no longer be marked complete";
     },
@@ -731,9 +765,12 @@ async function approvalWrites(
   completion: CompletionRow,
   answer: "approved" | "approved-by-silence",
 ): Promise<Write[]> {
+  if (engagement.state === "disputed") {
+    return approvalInDisputeWrites(ctx, actor, engagement, completion, answer);
+  }
   const now = ctx.now();
   const { labour } = await engagementMoney(ctx, engagement.id);
-  // Extra Labour an Updated Quote pays in is released here too, once there is some (#134).
+  // An Updated Quote's extra Labour is among it (#134); none is paid in once the work is marked complete.
   const labourCents = labour.unreleasedCents;
   const completedNow = exists(
     ctx.db
@@ -784,6 +821,7 @@ async function approvalWrites(
       completedNow,
     ),
     eventWrite(ctx, engagement, "approved", completedNow),
+    ...windowOpensWrites(ctx, engagement, now),
     ...tellWhile(
       ctx,
       actor,
@@ -810,6 +848,74 @@ async function approvalWrites(
           completedNow,
         )
       : []),
+  ];
+}
+
+/**
+ * The writes of Approval while the Client's Dispute holds part of the Labour
+ * (#135), in one batch: the Completion answered, and the Labour not held
+ * released, with the Artisan Fee; the Engagement stays Disputed until the
+ * Dispute closes. Everything after the first only if it was answered by this
+ * batch while still Disputed.
+ */
+async function approvalInDisputeWrites(
+  ctx: Context,
+  actor: Actor,
+  engagement: EngagementRow,
+  completion: CompletionRow,
+  answer: "approved" | "approved-by-silence",
+): Promise<Write[]> {
+  const now = ctx.now();
+  const { labour, heldCents } = await engagementMoney(ctx, engagement.id);
+  const answeredNow = exists(
+    ctx.db
+      .select({ one: sql`1` })
+      .from(completions)
+      .where(
+        and(
+          eq(completions.id, completion.id),
+          eq(completions.answer, answer),
+          eq(completions.answeredAt, now),
+        ),
+      ),
+  );
+  const told = {
+    event: "engagement.approved",
+    link: `/jobs/${engagement.jobId}`,
+  };
+  const held = formatRands(heldCents);
+  return [
+    ctx.db
+      .update(completions)
+      .set({ answer, answeredAt: now })
+      .where(and(unanswered(completion.id), engagementIn(ctx, engagement.id, ["disputed"]))),
+    ...ledgerWrites(
+      ctx,
+      releaseRows(engagement, LEDGER_KINDS.labourReleased, labour.unreleasedCents - heldCents),
+      answeredNow,
+    ),
+    eventWrite(ctx, engagement, "approved", answeredNow),
+    ...(answer === "approved-by-silence"
+      ? tellWhile(
+          ctx,
+          actor,
+          [engagement.clientId, engagement.artisanId],
+          {
+            ...told,
+            title: `Seven days passed, so the Labour not in Dispute was released; the ${held} in Dispute stays held: ${engagement.jobTitle}`,
+          },
+          answeredNow,
+        )
+      : tellWhile(
+          ctx,
+          actor,
+          [engagement.artisanId],
+          {
+            ...told,
+            title: `The Client approved the work but for the ${held} in Dispute, and the rest of the Labour was released: ${engagement.jobTitle}`,
+          },
+          answeredNow,
+        )),
   ];
 }
 
@@ -926,7 +1032,7 @@ function canMarkComplete(engagement: { state: EngagementState }): Result<null> {
 }
 
 /** The Engagement's Completion being checked, if there is one. */
-async function heldCompletionOf(ctx: Context, engagementId: string) {
+export async function heldCompletionOf(ctx: Context, engagementId: string) {
   const [row] = await ctx.db
     .select()
     .from(completions)
@@ -934,8 +1040,18 @@ async function heldCompletionOf(ctx: Context, engagementId: string) {
   return row ?? null;
 }
 
-/** The made Completion the Client has not answered, while the Engagement is Awaiting approval. */
-async function unansweredOf(ctx: Context, engagement: EngagementRow) {
+/**
+ * The made Completion the Client has not answered, while the Engagement is
+ * Awaiting approval, or Disputed by the Client over it: Approval then
+ * releases the Labour not held (#135).
+ */
+export async function unansweredOf(ctx: Context, engagement: EngagementRow) {
+  if (engagement.state === "disputed") {
+    const dispute = await openDisputeOf(ctx, engagement.id);
+    if (dispute?.against !== "completion" || !dispute.completionId) return null;
+    const completion = await completionRow(ctx, dispute.completionId);
+    return completion?.state === "made" && completion.answer === null ? completion : null;
+  }
   if (engagement.state !== "awaiting-approval") return null;
   const [row] = await ctx.db
     .select()
@@ -950,17 +1066,13 @@ async function unansweredOf(ctx: Context, engagement: EngagementRow) {
   return row ?? null;
 }
 
-/** The Completion and its Engagement, while the Client may still answer it; null otherwise. */
+/**
+ * The Completion and its Engagement, while the Client may still answer it, or
+ * approve it but for what their Dispute holds; null otherwise.
+ */
 async function answerable(ctx: Context, completionId: string) {
   const found = await withEngagement(ctx, completionId);
-  if (
-    !found ||
-    found.completion.state !== "made" ||
-    found.completion.answer !== null ||
-    found.engagement.state !== "awaiting-approval"
-  ) {
-    return null;
-  }
+  if (!found || (await unansweredOf(ctx, found.engagement))?.id !== completionId) return null;
   return found;
 }
 
@@ -995,14 +1107,21 @@ function completionIn(ctx: Context, completionId: string, state: CompletionRow["
   );
 }
 
-/** The SQL that is true while the Engagement is in one of these states. */
+/**
+ * The SQL that is true while the Engagement is in one of these states, and no
+ * Chargeback freezes it (#137): every step of the work, and its clocks, wait
+ * on the Admin then.
+ */
 function engagementIn(ctx: Context, engagementId: string, states: readonly EngagementState[]): SQL {
-  return exists(
-    ctx.db
-      .select({ one: sql`1` })
-      .from(engagements)
-      .where(and(eq(engagements.id, engagementId), inArray(engagements.state, states))),
-  );
+  return and(
+    exists(
+      ctx.db
+        .select({ one: sql`1` })
+        .from(engagements)
+        .where(and(eq(engagements.id, engagementId), inArray(engagements.state, states))),
+    ),
+    notFrozen(ctx, engagementId),
+  )!;
 }
 
 /** Uploads files to one place, adding each to what is stored so far. */

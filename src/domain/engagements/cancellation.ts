@@ -1,17 +1,19 @@
 import { and, eq, exists, sql } from "drizzle-orm";
 import { system, type Actor } from "../actor";
+import { frozenRefusal, isFrozen, notFrozen } from "../chargebacks";
 import { startClock, type ClockHandler } from "../clocks";
 import type { Context, Write } from "../context";
 import { eventWrite } from "../conversations/rows";
-import { engagementMoney, isOverdrawn } from "../ledger";
+import { engagementMoney, isOverdrawn, paidInIs } from "../ledger";
 import { formatRands } from "../money";
-import { refundWrites, sendRefunds } from "../refunds";
+import { refundWrites, sendEngagementRefunds } from "../refunds";
 import { ok, refuse, type Result } from "../result";
 import { formatTime } from "../sa-days";
 import { engagements, type CANCELLED_BY, type ENGAGEMENT_STATES } from "../schema";
 import { emailTells, tellWhile } from "../tells";
 import { CANCELLATION_REASON_MAX } from "./inputs";
 import { engagementRow, type EngagementRow } from "./rows";
+import { endProposedWrite } from "./updated-quote";
 
 // Cancellation (#133, ADR 0007): either party ends an Engagement before
 // Approval, with an optional reason that only the Admin reads, on the Artisan
@@ -19,9 +21,11 @@ import { engagementRow, type EngagementRow } from "./rows";
 // refunded to the Client at once, never the Protection Fee (ADR 0008). After
 // it the Materials stay with the Artisan, and the unreleased Labour is
 // refunded 72 hours later, the Artisan reminded 24 hours before; the Artisan
-// may refund sooner. The clocks refund and remind only while the Engagement
-// is still Cancelled, so a Dispute the Artisan opens within the 72 hours,
-// which makes it Disputed, stops the refund (#135).
+// may refund sooner. An Updated Quote's extra Materials and Labour are more
+// of each line (#134), and one still proposed ends. The clocks refund and
+// remind only while the Engagement is still Cancelled, so a Dispute the
+// Artisan opens within the 72 hours, which makes it Disputed, stops the
+// refund (#135).
 
 /** The clock that refunds a Cancellation's unreleased Labour. Its subject is the Engagement. */
 export const CANCELLATION_REFUND_CLOCK = "engagement.cancellation-refund";
@@ -61,12 +65,13 @@ export async function cancel(
   if (reason && reason.length > CANCELLATION_REASON_MAX) {
     return refuse("invalid", `A reason is at most ${CANCELLATION_REASON_MAX} characters.`);
   }
-  // Not while a Chargeback freezes the Engagement, too, once there are Chargebacks (#137).
   let current: EngagementRow | null = engagement;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (!current) break;
     const cancellable = canCancel(current);
     if (!cancellable.ok) return cancellable;
+    // Not while a Chargeback freezes it (#137): the Admin decides its money.
+    if (await isFrozen(ctx, current.id)) return frozenRefusal();
     const now = ctx.now();
     try {
       await ctx.commit(await cancelWrites(ctx, actor, current, { by, reason, now }));
@@ -76,20 +81,14 @@ export async function cancel(
     }
     const after = await engagementRow(ctx, engagement.id);
     if (after?.state === "cancelled" && after.cancelledAt?.getTime() === now.getTime()) {
-      if (!after.workStartedAt) {
-        await sendRefunds(ctx, after.paymentId).catch((error: unknown) => {
-          console.error(
-            `The Refund of Engagement ${after.id} was not sent; the every-minute run sends it`,
-            error,
-          );
-        });
-      }
+      if (!after.workStartedAt) await sendEngagementRefunds(ctx, after.id);
       await emailTells(ctx).catch((error: unknown) => {
         console.error("Tell emails did not go", error);
       });
       return ok(null);
     }
-    // It moved on between the read and the batch, which then changed nothing, as to Work started.
+    // It moved on between the read and the batch, which then changed nothing, as to Work started,
+    // or an Updated Quote's Payment arrived: read it again.
     current = after;
   }
   throw new Error(`Engagement ${engagement.id} kept changing while it was cancelled`);
@@ -98,9 +97,12 @@ export async function cancel(
 /**
  * The writes of a Cancellation, in one batch: the Engagement Cancelled, from
  * the state it was read in, with who cancelled, when, and why; its row in the
- * Conversation; before Work started, the Refund of what is unreleased, and
- * after it the clocks of the Labour's refund and its reminder; and the other
- * party told. Everything after the first is written only if the first landed.
+ * Conversation; its proposed Updated Quote ended; before Work started, the
+ * Refund of what is unreleased, and after it the clocks of the Labour's
+ * refund and its reminder; and the other party told. Everything after the
+ * first is written only if the first landed, which it does only while the
+ * money paid in is as read: an Updated Quote's Payment arriving meanwhile
+ * would otherwise go unrefunded.
  */
 async function cancelWrites(
   ctx: Context,
@@ -110,7 +112,6 @@ async function cancelWrites(
 ): Promise<Write[]> {
   const beforeWorkStarted = engagement.state === "paid";
   const { materials, labour } = await engagementMoney(ctx, engagement.id);
-  // Extra Materials and Labour an Updated Quote pays in are unreleased lines too, once there are some (#134).
   const refund = beforeWorkStarted
     ? { materials: materials.unreleasedCents, labour: labour.unreleasedCents }
     : null;
@@ -140,10 +141,18 @@ async function cancelWrites(
         // An Artisan's claim to have started ends with it; its clock then does nothing.
         startClaimedAt: null,
       })
-      .where(and(eq(engagements.id, engagement.id), eq(engagements.state, engagement.state))),
+      .where(
+        and(
+          eq(engagements.id, engagement.id),
+          eq(engagements.state, engagement.state),
+          paidInIs(ctx, engagement.id, materials.paidInCents + labour.paidInCents),
+          notFrozen(ctx, engagement.id),
+        ),
+      ),
     eventWrite(ctx, engagement, "cancelled", cancelledNow),
+    endProposedWrite(ctx, engagement.id, cancelledNow),
     ...(refund && refundCents > 0
-      ? refundWrites(ctx, engagement, ctx.newId(), "cancellation", refund, cancelledNow)
+      ? (await refundWrites(ctx, engagement, "cancellation", refund, cancelledNow)).writes
       : []),
     // Clocks whose Cancellation did not land do nothing when they fire.
     ...(beforeWorkStarted
@@ -196,7 +205,7 @@ function cancelledTitle(
   const at = formatTime(of.refundAt);
   if (by === "client") {
     return of.labourCents > 0
-      ? `The Client cancelled. The Materials stay with you, and ${labour}, is refunded to them at ${at}`
+      ? `The Client cancelled. The Materials stay with you, and ${labour}, is refunded to them at ${at}, unless you open a Dispute for work already done before then`
       : "The Client cancelled. The Materials stay with you";
   }
   return of.labourCents > 0
@@ -212,14 +221,14 @@ function cancelledTitle(
 const labourRefund: ClockHandler = async (ctx, clock) => {
   const due = await labourDue(ctx, clock.subjectId, clock.dueAt, 0);
   if (!due) return [];
-  return refundWrites(
+  const { writes } = await refundWrites(
     ctx,
     due.engagement,
-    ctx.newId(),
     "cancellation",
     { materials: 0, labour: due.labourCents },
     due.stillCancelled,
   );
+  return writes;
 };
 
 /** Reminds the Artisan 24 hours before a Cancellation refunds the unreleased Labour. */
@@ -227,14 +236,13 @@ const refundReminder: ClockHandler = async (ctx, clock) => {
   const due = await labourDue(ctx, clock.subjectId, clock.dueAt, REMIND_BEFORE_MS);
   if (!due) return [];
   const { engagement, labourCents, refundAt } = due;
-  // Open a Dispute for work already done before then, too, once there are Disputes (#135).
   return tellWhile(
     ctx,
     system,
     [engagement.artisanId],
     {
       event: "engagement.cancellation-reminder",
-      title: `The Labour not yet released, ${formatRands(labourCents)}, is refunded to the Client in 24 hours, at ${formatTime(refundAt)}: ${engagement.jobTitle}`,
+      title: `The Labour not yet released, ${formatRands(labourCents)}, is refunded to the Client in 24 hours, at ${formatTime(refundAt)}. Open a Dispute before then for work already done: ${engagement.jobTitle}`,
       link: `/jobs/${engagement.jobId}`,
     },
     due.stillCancelled,
@@ -249,7 +257,8 @@ export const cancellationClocks = {
 /**
  * The Engagement whose Cancellation's Labour refund the clock is for, with
  * the Labour unreleased, while it is still Cancelled after Work started by
- * that Cancellation and some Labour is unreleased; null otherwise.
+ * that Cancellation and some Labour is unreleased, and no Chargeback freezes
+ * it (#137), whose decision then decides that Labour; null otherwise.
  */
 async function labourDue(ctx: Context, engagementId: string, dueAt: Date, beforeMs: number) {
   const engagement = await engagementRow(ctx, engagementId);
@@ -276,6 +285,7 @@ async function labourDue(ctx: Context, engagementId: string, dueAt: Date, before
             eq(engagements.id, engagement.id),
             eq(engagements.state, "cancelled"),
             eq(engagements.cancelledAt, engagement.cancelledAt),
+            notFrozen(ctx, engagement.id),
           ),
         ),
     ),

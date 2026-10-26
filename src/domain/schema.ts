@@ -3,11 +3,13 @@ import { MATCHINGS, SITE_TYPES } from "./jobs/inputs";
 import { MESSAGE_EVENTS } from "./conversations/inputs";
 import { MATERIALS_BY } from "./quotes/inputs";
 import { QUEUE_NAMES } from "./queue-names";
+import { REPORT_REASONS } from "./reports/reasons";
 import { SUPPORT_TOPICS } from "./support/topics";
 import { SERVICE_CATEGORIES } from "./service-categories";
 import { CHECK_KINDS } from "./verification/checks";
 import type { CheckDetails, CheckFile, Reading } from "./verification/stored";
 import type { StoredFile } from "./uploads";
+import type { ChargebackOutcome } from "./ports";
 import {
   check,
   index,
@@ -178,6 +180,13 @@ export const accounts = sqliteTable(
     vatNumber: text("vat_number"),
     /** When the Admin held an Artisan's Payouts, while they are held (#128); they wait meanwhile. */
     payoutsHeldAt: instant("payouts_held_at"),
+    /**
+     * When the Admin took the Artisan's Profile out of view from a Report
+     * (#136), until a Profile edit the Admin releases fixes it; and why, for
+     * the Artisan.
+     */
+    profileOutOfViewSince: instant("profile_out_of_view_since"),
+    profileOutOfViewFor: text("profile_out_of_view_for"),
   },
   (table) => [check("accounts_kind", sql`${table.kind} in ('client', 'artisan')`)],
 );
@@ -381,6 +390,107 @@ export const supportRequests = sqliteTable(
   ],
 );
 
+/** What a Report may be about (#136, #138). */
+export const REPORT_SUBJECTS = ["job", "quote", "message", "profile", "review"] as const;
+
+/**
+ * A signed-in Account's Report of a Job, Quote, message, Artisan Profile, or
+ * Review it can see, at most once per reporter per thing. Repeats fold into
+ * the one queue item open for the thing; once that is decided, the next
+ * Report opens another.
+ */
+export const reports = sqliteTable(
+  "reports",
+  {
+    id: text("id").primaryKey(),
+    reporterId: text("reporter_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    subjectKind: text("subject_kind", { enum: REPORT_SUBJECTS }).notNull(),
+    /** The Job's, Quote's, message's, or Review's id, or the Profile's Artisan's. */
+    subjectId: text("subject_id").notNull(),
+    /** The Account reported: whose the thing is. Never shown to it, nor the reporter to it. */
+    reportedId: text("reported_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    reason: text("reason", { enum: REPORT_REASONS }).notNull(),
+    note: text("note"),
+    /** Why the Content check was unsure of the note, for the Admin, who alone reads it. */
+    noteHeldFor: text("note_held_for"),
+    /** The queue item it folded into. */
+    queueItemId: text("queue_item_id")
+      .notNull()
+      .references(() => queueItems.id),
+    reportedAt: instant("reported_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("reports_once_per_reporter").on(
+      table.reporterId,
+      table.subjectKind,
+      table.subjectId,
+    ),
+    index("reports_item").on(table.queueItemId, table.reportedAt),
+    check(
+      "reports_subject_kind",
+      sql.raw(`subject_kind in (${REPORT_SUBJECTS.map((kind) => `'${kind}'`).join(", ")})`),
+    ),
+    check(
+      "reports_reason",
+      sql.raw(`reason in (${REPORT_REASONS.map((reason) => `'${reason}'`).join(", ")})`),
+    ),
+  ],
+);
+
+/**
+ * Each warning the Admin gives an Account, from a Report or the People page
+ * (#136). It is told the reason. Warnings stay, a Suspension lifted or not;
+ * one for Leaving makes the next Leaving a Suspension.
+ */
+export const warnings = sqliteTable(
+  "warnings",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    /** Whether it was for Leaving. */
+    leaving: integer("leaving", { mode: "boolean" }).notNull(),
+    warnedBy: text("warned_by")
+      .notNull()
+      .references(() => admins.id),
+    warnedAt: instant("warned_at").notNull(),
+  },
+  (table) => [index("warnings_account").on(table.accountId, table.warnedAt)],
+);
+
+/**
+ * Each Suspension of an Account (#136): it cannot start new work until the
+ * Admin lifts it, and sees the reason meanwhile. One stands at a time. The
+ * system suspends a Client whose card Payment is charged back (#137).
+ */
+export const suspensions = sqliteTable(
+  "suspensions",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    /** Whether it was for Leaving. */
+    leaving: integer("leaving", { mode: "boolean" }).notNull(),
+    /** Null when the system suspended it, at a Chargeback (#137). */
+    suspendedBy: text("suspended_by").references(() => admins.id),
+    suspendedAt: instant("suspended_at").notNull(),
+    liftedBy: text("lifted_by").references(() => admins.id),
+    liftedAt: instant("lifted_at"),
+  },
+  (table) => [
+    index("suspensions_account").on(table.accountId, table.suspendedAt),
+    uniqueIndex("suspensions_one_standing").on(table.accountId).where(sql.raw("lifted_at is null")),
+  ],
+);
+
 export const CHECK_STATES = ["submitted", "accepted", "rejected", "removed", "superseded"] as const;
 
 /**
@@ -578,9 +688,21 @@ export const jobs = sqliteTable(
     expiresAt: instant("expires_at"),
     /** When an Open matched Job's next Batch is due; null for an Invite-only one. */
     nextBatchAt: instant("next_batch_at"),
+    /**
+     * When the Admin took it out of view from a Report (#136), until an edit
+     * the Admin releases fixes it; and why, for the Client.
+     */
+    outOfViewSince: instant("out_of_view_since"),
+    outOfViewFor: text("out_of_view_for"),
+    /**
+     * The Completed Engagement it was opened from by Hire Again (#139): an
+     * Invite-only Job inviting only that Engagement's Artisan. Never changes.
+     */
+    hireAgainOf: text("hire_again_of").references((): AnySQLiteColumn => engagements.id),
   },
   (table) => [
     index("jobs_client").on(table.clientId, table.updatedAt),
+    index("jobs_hire_again").on(table.hireAgainOf),
     check("jobs_state", sql.raw(`state in (${JOB_STATES.map((s) => `'${s}'`).join(", ")})`)),
   ],
 );
@@ -864,16 +986,26 @@ export const messages = sqliteTable(
 export const PAYMENT_STATES = ["open", "failed", "paid", "not-hired"] as const;
 
 /** Why a Payment that arrived Hired nobody, and so is refunded whole. */
-export const NOT_HIRED_REASONS = ["quote-ended", "quote-changed", "not-verified"] as const;
+export const NOT_HIRED_REASONS = [
+  "quote-ended",
+  "quote-changed",
+  "not-verified",
+  /** An Updated Quote's Payment that arrived once it was no longer proposed (#134). */
+  "updated-quote-ended",
+  /** Either party was Suspended, or the Job taken out of view, while the Client paid (#136). */
+  "suspended",
+  "out-of-view",
+] as const;
 
 /**
  * Each checkout a Client opens to Hire a Sent Quote: the Quote as it stood
- * then, and the Payment it asks for, the Quote plus the Protection Fee. Our
+ * then, and the Payment it asks for, the Quote plus the Protection Fee; or to
+ * accept an Updated Quote (#134): its difference plus the Protection Fee. Our
  * id is the collection's id at the payment adapter and its reference. It is
  * open until the collection's event arrives: failed, which changes nothing
- * else, or succeeded, which Hires the Quote (paid) or, if the Hire can no
- * longer happen, refunds the whole Payment (not-hired). A trigger in the
- * migration refuses any other change of state.
+ * else, or succeeded, which Hires the Quote or applies the Updated Quote
+ * (paid) or, if that can no longer happen, refunds the whole Payment
+ * (not-hired). A trigger in the migration refuses any other change of state.
  */
 export const payments = sqliteTable(
   "payments",
@@ -885,12 +1017,17 @@ export const payments = sqliteTable(
     jobId: text("job_id")
       .notNull()
       .references(() => jobs.id),
+    /** The Quote it Hires, or whose Engagement's Updated Quote it pays for. */
     quoteId: text("quote_id")
       .notNull()
       .references(() => quotes.id),
+    /** The Updated Quote it pays the difference of; null for a Hire's (#134). */
+    updatedQuoteId: text("updated_quote_id").references((): AnySQLiteColumn => updatedQuotes.id),
     /** When the Quote was last revised as the Client saw it; the Hire is of that version only. */
     quoteRevisedAt: instant("quote_revised_at"),
+    /** The Labour it pays in: the Quote's, or what an Updated Quote adds to it. */
     labourCents: integer("labour_cents").notNull(),
+    /** The Materials it pays in: the Quote's, or what an Updated Quote adds to them. */
     materialsCents: integer("materials_cents").notNull(),
     protectionFeeCents: integer("protection_fee_cents").notNull(),
     /** What the Client pays: Labour, Materials, and the Protection Fee. */
@@ -907,6 +1044,7 @@ export const payments = sqliteTable(
   },
   (table) => [
     index("payments_job").on(table.jobId, table.openedAt),
+    index("payments_updated_quote").on(table.updatedQuoteId),
     check(
       "payments_state",
       sql.raw(`state in (${PAYMENT_STATES.map((state) => `'${state}'`).join(", ")})`),
@@ -992,6 +1130,61 @@ export const engagements = sqliteTable(
 );
 
 /**
+ * An Updated Quote's states: proposed, until the Artisan withdraws it, the
+ * Client rejects it, the Client's Payment of its difference accepts it, or
+ * the Engagement is Cancelled while it is proposed (ended).
+ */
+export const UPDATED_QUOTE_STATES = [
+  "proposed",
+  "withdrawn",
+  "rejected",
+  "accepted",
+  "ended",
+] as const;
+
+/**
+ * Each Updated Quote the Artisan proposes on an Engagement before Completion
+ * (#134, ADR 0019): the Labour and Materials it stood at then, and the new
+ * ones, neither lower. One is proposed at a time. What it proposes never
+ * changes, and its state moves forward only (a trigger in the migration
+ * refuses anything else).
+ */
+export const updatedQuotes = sqliteTable(
+  "updated_quotes",
+  {
+    id: text("id").primaryKey(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id),
+    /** The Engagement's Labour when it was proposed: paid in, less any refunded. */
+    fromLabourCents: integer("from_labour_cents").notNull(),
+    fromMaterialsCents: integer("from_materials_cents").notNull(),
+    labourCents: integer("labour_cents").notNull(),
+    materialsCents: integer("materials_cents").notNull(),
+    state: text("state", { enum: UPDATED_QUOTE_STATES }).notNull(),
+    proposedAt: instant("proposed_at").notNull(),
+    /** When it was withdrawn, rejected, accepted, or ended. */
+    answeredAt: instant("answered_at"),
+  },
+  (table) => [
+    index("updated_quotes_engagement").on(table.engagementId, table.proposedAt),
+    uniqueIndex("updated_quotes_one_proposed")
+      .on(table.engagementId)
+      .where(sql.raw("state = 'proposed'")),
+    check(
+      "updated_quotes_state",
+      sql.raw(`state in (${UPDATED_QUOTE_STATES.map((state) => `'${state}'`).join(", ")})`),
+    ),
+    check(
+      "updated_quotes_amounts",
+      sql.raw(
+        "typeof(labour_cents) = 'integer' and typeof(materials_cents) = 'integer' and labour_cents >= from_labour_cents and materials_cents >= from_materials_cents and labour_cents + materials_cents > from_labour_cents + from_materials_cents",
+      ),
+    ),
+  ],
+);
+
+/**
  * A Completion's states: Held for the Admin's Pre-check, made (the Client
  * may answer it), refused by the Admin, withdrawn by the Artisan while Held,
  * or unsent if the Engagement had moved on by its release.
@@ -1070,7 +1263,9 @@ export const completions = sqliteTable(
  * A Refund's states: waiting while another Refund of its Payment is with the
  * payment adapter (one at a time per collection), sent once the adapter has
  * it, paused while the float is low, paid, or failed, when it stays owed to
- * the Client until the Admin pays it by hand.
+ * the Client until the Admin pays it by hand; or charged back, a waiting or
+ * failed one the bank sent back to the Client by a Chargeback instead, so it
+ * is never sent or paid by hand (#137).
  */
 export const REFUND_STATES = [
   "waiting",
@@ -1079,10 +1274,21 @@ export const REFUND_STATES = [
   "paid",
   "failed",
   "paid-by-hand",
+  "charged-back",
 ] as const;
 
-/** Why a Refund was made: the Artisan's choice, a Payment that Hired nobody, or a Cancellation (#133). */
-export const REFUND_CAUSES = ["artisan", "not-hired", "cancellation"] as const;
+/**
+ * Why a Refund was made: the Artisan's choice, a Payment that Hired nobody, a
+ * Cancellation (#133), the Admin's decision of a Dispute (#135), or of a
+ * Chargeback, for what the bank did not send back (#137).
+ */
+export const REFUND_CAUSES = [
+  "artisan",
+  "not-hired",
+  "cancellation",
+  "dispute",
+  "chargeback",
+] as const;
 
 /**
  * Each Refund of a Payment to its Client (#132): unreleased money, never the
@@ -1117,6 +1323,11 @@ export const refunds = sqliteTable(
     failedAt: instant("failed_at"),
     /** Why the bank could not take it. */
     failedFor: text("failed_for"),
+    /**
+     * Once charged back, what of it the bank sent back to the Client by a
+     * Chargeback (#137); any rest is a waiting Refund of its own.
+     */
+    chargedBackCents: integer("charged_back_cents"),
   },
   (table) => [
     index("refunds_payment").on(table.paymentId, table.madeAt),
@@ -1136,6 +1347,196 @@ export const refunds = sqliteTable(
         "typeof(amount_cents) = 'integer' and amount_cents > 0 and labour_cents >= 0 and materials_cents >= 0 and protection_fee_cents >= 0 and amount_cents = labour_cents + materials_cents + protection_fee_cents",
       ),
     ),
+  ],
+);
+
+/** Which party opened a Dispute (#135). */
+export const DISPUTED_BY = ["client", "artisan"] as const;
+
+/**
+ * What a Dispute is against: the Client's, a Completion; the Artisan's, a Fix
+ * request or a Cancellation's refund of the Labour.
+ */
+export const DISPUTE_GROUNDS = ["completion", "fix-request", "cancellation"] as const;
+
+/**
+ * A Dispute's states: open until the Admin decides it, or until nothing is
+ * held, when it is settled by the parties.
+ */
+export const DISPUTE_STATES = ["open", "settled", "decided"] as const;
+
+/** Where a Dispute's reason stands: shown to the other party, or kept for the Admin, who was unsure of it. */
+export const DISPUTE_REASON_STATES = ["shown", "held"] as const;
+
+/**
+ * An Engagement's one Dispute (#135): the Labour it holds, named by the
+ * Client or all of it unreleased for the Artisan, which the Admin splits
+ * between Release and Refund, finally. What is held now is derived from the
+ * ledger. What it was opened for never changes, and its state moves forward
+ * once (a trigger in the migration refuses anything else).
+ */
+export const disputes = sqliteTable(
+  "disputes",
+  {
+    id: text("id").primaryKey(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .unique()
+      .references(() => engagements.id),
+    openedBy: text("opened_by", { enum: DISPUTED_BY }).notNull(),
+    against: text("against", { enum: DISPUTE_GROUNDS }).notNull(),
+    /** The Completion disputed, or the one the Fix request answered; null for a Cancellation's. */
+    completionId: text("completion_id").references(() => completions.id),
+    /** The Labour it held when opened. */
+    heldCents: integer("held_cents").notNull(),
+    reason: text("reason").notNull(),
+    photos: text("photos", { mode: "json" })
+      .$type<Extract<StoredFile, { kind: "photo" }>[]>()
+      .notNull(),
+    reasonState: text("reason_state", { enum: DISPUTE_REASON_STATES }).notNull(),
+    /** Why the Content check was unsure of the reason or its photos, for the Admin. */
+    reasonHeldFor: text("reason_held_for"),
+    state: text("state", { enum: DISPUTE_STATES }).notNull(),
+    openedAt: instant("opened_at").notNull(),
+    /** When it was settled or decided. */
+    closedAt: instant("closed_at"),
+    /** What the Admin's decision released to the Artisan, and refunded to the Client. */
+    releasedCents: integer("released_cents"),
+    refundedCents: integer("refunded_cents"),
+  },
+  () => [
+    check(
+      "disputes_state",
+      sql.raw(`state in (${DISPUTE_STATES.map((state) => `'${state}'`).join(", ")})`),
+    ),
+    check("disputes_held", sql.raw("typeof(held_cents) = 'integer' and held_cents > 0")),
+  ],
+);
+
+/**
+ * A Chargeback's states: open, while the bank looks into it; closed, by the
+ * bank, with what it sent back to the Client; and decided, by the Admin.
+ */
+export const CHARGEBACK_STATES = ["open", "closed", "decided"] as const;
+
+/** How the bank closed a Chargeback, as the payment adapter says. */
+export const CHARGEBACK_OUTCOMES = [
+  "won",
+  "lost",
+  "accepted",
+  "partially_accepted",
+] as const satisfies readonly ChargebackOutcome[];
+
+/**
+ * A card Payment reversed by the bank (#137), one per Payment. Until the
+ * Admin decides it, it freezes the Payment's Engagement: no clock does
+ * anything and nothing more is released or refunded. Once the bank closes
+ * it, the Admin decides the Engagement's unreleased money: released to the
+ * Artisan, or left with the Chargeback, the Client's, refunded only for what
+ * the bank did not send back. Of what the bank sent back, what the platform
+ * no longer held is its loss. A trigger in the migration refuses any other
+ * change.
+ */
+export const chargebacks = sqliteTable(
+  "chargebacks",
+  {
+    id: text("id").primaryKey(),
+    paymentId: text("payment_id")
+      .notNull()
+      .unique()
+      .references(() => payments.id),
+    /** The Engagement it freezes; null for a Payment that Hired nobody. */
+    engagementId: text("engagement_id").references(() => engagements.id),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => accounts.id),
+    /** What the bank disputes, as it opened it. */
+    amountCents: integer("amount_cents").notNull(),
+    state: text("state", { enum: CHARGEBACK_STATES }).notNull(),
+    openedAt: instant("opened_at").notNull(),
+    closedAt: instant("closed_at"),
+    outcome: text("outcome", { enum: CHARGEBACK_OUTCOMES }),
+    /** What the bank sent back to the Client, as it closed it. */
+    reversedCents: integer("reversed_cents"),
+    decidedAt: instant("decided_at"),
+    /** What the Admin's decision released to the Artisan, before the Artisan Fee. */
+    releasedCents: integer("released_cents"),
+    /** What it left with the Chargeback, of what the bank sent back. */
+    chargedBackCents: integer("charged_back_cents"),
+    /** What it left to the Client beyond what the bank sent back, refunded. */
+    refundedCents: integer("refunded_cents"),
+    /** Of what the bank sent back, what the platform no longer held: its loss. */
+    lossCents: integer("loss_cents"),
+  },
+  (table) => [
+    index("chargebacks_engagement").on(table.engagementId),
+    check(
+      "chargebacks_state",
+      sql.raw(`state in (${CHARGEBACK_STATES.map((state) => `'${state}'`).join(", ")})`),
+    ),
+    check(
+      "chargebacks_outcome",
+      sql.raw(`outcome in (${CHARGEBACK_OUTCOMES.map((outcome) => `'${outcome}'`).join(", ")})`),
+    ),
+    check("chargebacks_amount", sql.raw("typeof(amount_cents) = 'integer' and amount_cents > 0")),
+  ],
+);
+
+/**
+ * A Review's states: held, waiting for the Admin's Pre-check, which every
+ * Review does; published, or refused; and a published one removed, from a
+ * Report (#138).
+ */
+export const REVIEW_STATES = ["held", "published", "refused", "removed"] as const;
+
+/** The only grounds on which the Admin refuses or removes a Review (#138). */
+export const REVIEW_GROUNDS = ["fraud", "abuse", "personal-data"] as const;
+
+/**
+ * One party's Review of the other on a Completed Engagement (#138, ADR 0012):
+ * a rating from 1 to 5 and an optional comment, one per party, never edited
+ * or withdrawn. A trigger in the migration refuses changing what it says and
+ * any move of its state but held to published or refused, and published to
+ * removed.
+ */
+export const reviews = sqliteTable(
+  "reviews",
+  {
+    id: text("id").primaryKey(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id),
+    authorId: text("author_id")
+      .notNull()
+      .references(() => accounts.id),
+    /** The other party, whom it is of. */
+    reviewedId: text("reviewed_id")
+      .notNull()
+      .references(() => accounts.id),
+    rating: integer("rating").notNull(),
+    comment: text("comment"),
+    /** Why the Content check was unsure of the comment, for the Admin. */
+    commentHeldFor: text("comment_held_for"),
+    state: text("state", { enum: REVIEW_STATES }).notNull(),
+    writtenAt: instant("written_at").notNull(),
+    /** When the Admin published, refused, or removed it. */
+    decidedAt: instant("decided_at"),
+    /** Why the Admin refused or removed it, and the note the author was given with it. */
+    ground: text("ground", { enum: REVIEW_GROUNDS }),
+    groundNote: text("ground_note"),
+  },
+  (table) => [
+    uniqueIndex("reviews_once_per_party").on(table.engagementId, table.authorId),
+    index("reviews_of").on(table.reviewedId, table.state, table.writtenAt),
+    check(
+      "reviews_state",
+      sql.raw(`state in (${REVIEW_STATES.map((state) => `'${state}'`).join(", ")})`),
+    ),
+    check(
+      "reviews_ground",
+      sql.raw(`ground in (${REVIEW_GROUNDS.map((ground) => `'${ground}'`).join(", ")})`),
+    ),
+    check("reviews_rating", sql.raw("typeof(rating) = 'integer' and rating between 1 and 5")),
   ],
 );
 

@@ -1,13 +1,16 @@
 import { and, asc, eq } from "drizzle-orm";
 import { publicName } from "../accounts/names";
+import { chargebackView } from "../chargebacks";
 import type { Context } from "../context";
 import { engagementMoney } from "../ledger";
 import { fieldsView } from "../quotes/views";
 import { refundsOf, shownState } from "../refunds";
 import { accounts, engagements, jobs, payments, quotes, refunds } from "../schema";
+import { protectionFeeCents as protectionFeeOn } from "../money";
 import type { ServiceCategory } from "../service-categories";
 import { refusedFor } from "../content/held";
 import { badgesOf } from "../verification";
+import { engagementReviews } from "../reviews/views";
 import {
   approvalAt,
   completionFilePath,
@@ -18,6 +21,9 @@ import {
 } from "./completion";
 import { certificateNeeded } from "./inputs";
 import { canCancel, labourRefundAt } from "./cancellation";
+import { disputeOf, disputeView } from "./dispute";
+import { addsOf, updatedQuotesOf } from "./updated-quote";
+import { isBeforeCompletion, priceNow } from "./updated-quote-rows";
 import { answerBy, startDayCome } from "./work-started";
 
 // An Engagement as each party sees it on the Job page (#107): the Client
@@ -31,24 +37,51 @@ export async function engagementAsClient(
   const found = await engagementOf(ctx, job.id);
   if (!found) return null;
   const { engagement, quote } = found;
-  const [money, [artisan], badges, completions, refunded] = await Promise.all([
-    engagementMoney(ctx, engagement.id),
-    ctx.db
-      .select({
-        name: accounts.name,
-        tradingName: accounts.tradingName,
-        namesShown: accounts.namesShown,
-      })
-      .from(accounts)
-      .where(eq(accounts.id, engagement.artisanId)),
-    badgesOf(ctx, engagement.artisanId),
-    completionsOf(ctx, engagement.id),
-    refundsOf(ctx, engagement.id),
-  ]);
+  const [money, [artisan], badges, completions, refunded, updated, disputed, chargeback] =
+    await Promise.all([
+      engagementMoney(ctx, engagement.id),
+      ctx.db
+        .select({
+          name: accounts.name,
+          tradingName: accounts.tradingName,
+          namesShown: accounts.namesShown,
+        })
+        .from(accounts)
+        .where(eq(accounts.id, engagement.artisanId)),
+      badgesOf(ctx, engagement.artisanId),
+      completionsOf(ctx, engagement.id),
+      refundsOf(ctx, engagement.id),
+      updatedQuotesOf(ctx, engagement.id),
+      disputeOf(ctx, engagement.id),
+      chargebackView(ctx, engagement.id),
+    ]);
   const { protectionFeeCents, ...shared } = money;
+  const proposed = proposedView(updated, shared);
+  const dispute = await disputeView(ctx, disputed, "client", money.heldCents);
+  // While a Chargeback freezes it, nothing is done on it (#137).
+  const frozen = chargeback?.frozen ?? false;
   return {
-    ...common(ctx, found, completions, refunded, money),
+    ...common(ctx, found, completions, refunded, money, updated, dispute, chargeback),
+    /** The Updated Quote waiting for the Client, with what paying the difference costs them. */
+    updatedQuote: proposed && {
+      ...proposed,
+      protectionFeeCents: protectionFeeOn(proposed.addsCents),
+      payCents: proposed.addsCents + protectionFeeOn(proposed.addsCents),
+    },
     fixRequest: await fixRequestView(ctx, found, completions, "client"),
+    /**
+     * What the Client may dispute now, while a Completion awaits them: up to
+     * the Labour not yet released (#135).
+     */
+    disputable:
+      engagement.state === "awaiting-approval" && money.labour.unreleasedCents > 0 && !frozen
+        ? { labourCents: money.labour.unreleasedCents }
+        : null,
+    /** What the Client may release of what their Dispute holds, to settle it. */
+    releasable:
+      dispute?.state === "open" && dispute.heldCents > 0 && !frozen
+        ? { heldCents: dispute.heldCents }
+        : null,
     artisan: {
       artisanId: engagement.artisanId,
       // Names the Content check has not passed are nobody else's to see.
@@ -57,6 +90,13 @@ export async function engagementAsClient(
     },
     money: { ...moneyView(shared), protectionFeeCents },
     quote: { quoteId: quote.id, ...fieldsView(quote) },
+    /** Once it is Completed, the Client's Review and the Artisan's, as the Client may see them (#138). */
+    reviews: await engagementReviews(ctx, engagement, engagement.clientId),
+    /**
+     * Whether the Client may Hire Again (#139): once it is Completed, unless
+     * the Client charged it back, which leaves the Artisan Fee at 10% (#137).
+     */
+    hireAgain: engagement.state === "completed" && chargeback === null,
   };
 }
 
@@ -64,34 +104,67 @@ export async function engagementAsClient(
 export async function engagementAsArtisan(ctx: Context, jobId: string, artisanId: string) {
   const found = await engagementOf(ctx, jobId);
   if (!found || found.engagement.artisanId !== artisanId) return null;
-  const [{ protectionFeeCents: _, ...money }, completions, refunded] = await Promise.all([
+  const [
+    { protectionFeeCents: _, ...money },
+    completions,
+    refunded,
+    updated,
+    disputed,
+    chargeback,
+  ] = await Promise.all([
     engagementMoney(ctx, found.engagement.id),
     completionsOf(ctx, found.engagement.id),
     refundsOf(ctx, found.engagement.id),
+    updatedQuotesOf(ctx, found.engagement.id),
+    disputeOf(ctx, found.engagement.id),
+    chargebackView(ctx, found.engagement.id),
   ]);
+  // While a Chargeback freezes it, nothing is done on it (#137).
+  const frozen = chargeback?.frozen ?? false;
   const { state } = found.engagement;
   const newest = completions.at(-1);
   const held = newest?.state === "held";
+  const proposed = proposedView(updated, money);
+  const dispute = await disputeView(ctx, disputed, "artisan", money.heldCents);
   return {
-    ...common(ctx, found, completions, refunded, money),
+    ...common(ctx, found, completions, refunded, money, updated, dispute, chargeback),
+    /** The Artisan's Updated Quote waiting for the Client. */
+    updatedQuote: proposed,
+    /**
+     * Whether the Artisan may propose an Updated Quote now: before
+     * Completion, with none waiting, and from the price now, neither line
+     * lower (#134).
+     */
+    proposeFrom:
+      isBeforeCompletion(state) && !held && !proposed && !frozen
+        ? { ...priceNow(money), materialsBy: found.quote.materialsBy }
+        : null,
     fixRequest: await fixRequestView(ctx, found, completions, "artisan"),
+    /**
+     * What the Artisan may dispute now: all the Labour not yet released,
+     * against a Fix request, or until a Cancellation's 72 hours end (#135).
+     */
+    disputable: frozen
+      ? null
+      : artisanDisputable(ctx, found.engagement, money.labour.unreleasedCents),
     money: { ...moneyView(money), artisanFeePercent: found.engagement.artisanFeePercent },
     /**
      * What the Artisan may refund now, of each line: what is unreleased of
-     * it. Extra Materials an Updated Quote pays in are a line of their own,
-     * once there are some (#134).
+     * it, an Updated Quote's extra included (#134).
      */
     refundable: {
-      materialsCents: money.materials.unreleasedCents,
-      labourCents: money.labour.unreleasedCents,
+      materialsCents: frozen ? 0 : money.materials.unreleasedCents,
+      labourCents: frozen ? 0 : money.labour.unreleasedCents,
     },
     /** Whether the Artisan may say they've started now. */
     canClaimStart:
       state === "paid" &&
       !found.engagement.startClaimedAt &&
-      startDayCome(ctx, found.quote.startOn),
-    /** Whether the Artisan may mark the work complete now. */
-    canComplete: (state === "work-started" || state === "fix-requested") && !held,
+      startDayCome(ctx, found.quote.startOn) &&
+      !frozen,
+    /** Whether the Artisan may mark the work complete now: not while an Updated Quote waits. */
+    canComplete:
+      (state === "work-started" || state === "fix-requested") && !held && !proposed && !frozen,
     /** The certificate the Completion needs, if the Job needs one. */
     certificateNeeded: certificateNeeded(found.job),
     /** The Artisan's newest Completion while it is being checked, or after the Admin refused it. */
@@ -104,7 +177,24 @@ export async function engagementAsArtisan(ctx: Context, jobId: string, artisanId
             reason: (await refusedFor(ctx, heldCompletion.kind, newest.id)) ?? "",
           }
         : null,
+    /** Once it is Completed, the Artisan's Review and the Client's, as the Artisan may see them (#138). */
+    reviews: await engagementReviews(ctx, found.engagement, artisanId),
   };
+}
+
+/** What the Artisan may dispute now, and until when; null if nothing. */
+function artisanDisputable(
+  ctx: Context,
+  engagement: Found["engagement"],
+  labourCents: number,
+): { labourCents: number; until: Date | null } | null {
+  if (labourCents === 0) return null;
+  if (engagement.state === "fix-requested") return { labourCents, until: null };
+  if (engagement.state !== "cancelled" || !engagement.workStartedAt || !engagement.cancelledAt) {
+    return null;
+  }
+  const until = labourRefundAt(engagement.cancelledAt);
+  return ctx.now().getTime() < until.getTime() ? { labourCents, until } : null;
 }
 
 /**
@@ -144,13 +234,44 @@ async function engagementOf(ctx: Context, jobId: string) {
 type Found = NonNullable<Awaited<ReturnType<typeof engagementOf>>>;
 type Refunded = Awaited<ReturnType<typeof refundsOf>>;
 type Money = Omit<Awaited<ReturnType<typeof engagementMoney>>, "protectionFeeCents">;
+type UpdatedQuotes = Awaited<ReturnType<typeof updatedQuotesOf>>;
+type Dispute = Awaited<ReturnType<typeof disputeView>>;
+type Chargeback = Awaited<ReturnType<typeof chargebackView>>;
+
+/**
+ * The proposed Updated Quote, as both parties see it: the price it raises
+ * from, to, and by. The price is the one now, so a Refund made while it
+ * waits lowers both.
+ */
+function proposedView(updated: UpdatedQuotes, money: Money) {
+  const proposed = updated.find((each) => each.state === "proposed");
+  if (!proposed) return null;
+  const from = priceNow(money);
+  const adds = addsOf(proposed);
+  return {
+    updatedQuoteId: proposed.id,
+    proposedAt: proposed.proposedAt,
+    fromLabourCents: from.labourCents,
+    fromMaterialsCents: from.materialsCents,
+    labourCents: from.labourCents + adds.labourCents,
+    materialsCents: from.materialsCents + adds.materialsCents,
+    addsCents: adds.totalCents,
+  };
+}
+
+/** What happened to each Updated Quote; one ended by a Cancellation shows as the Cancellation. */
+const UPDATED_QUOTE_EVENTS = {
+  withdrawn: "updated-quote.withdrawn",
+  rejected: "updated-quote.rejected",
+  accepted: "updated-quote.accepted",
+} as const;
 
 /**
  * What both parties see alike: its state, the Hired Quote's dates, the
  * Artisan's claim to have started while it waits for the Client, the newest
  * Completion the Client could see and the bar to its Approval by silence,
- * whether it may be cancelled and its Cancellation, its Refunds, and its
- * Activity.
+ * whether it may be cancelled and its Cancellation, its Dispute, its
+ * Chargeback (#137), its Refunds, and its Activity.
  */
 function common(
   ctx: Context,
@@ -158,6 +279,9 @@ function common(
   completions: CompletionRow[],
   refunded: Refunded,
   money: Money,
+  updated: UpdatedQuotes,
+  dispute: Dispute,
+  chargeback: Chargeback,
 ) {
   const { startClaimedAt, workStartedAt, completedAt, cancelledAt } = engagement;
   const made = completions.filter((completion) => completion.state === "made");
@@ -175,15 +299,23 @@ function common(
         : null,
     workStartedAt,
     completion: newest ? completionView(newest) : null,
-    /** How far the seven days to Approval by silence have run, while the Client may answer. */
+    /**
+     * How far the seven days to Approval by silence have run, while the Client
+     * may answer, or approve the Labour their Dispute does not hold (#135).
+     */
     approval:
-      engagement.state === "awaiting-approval" && newest?.madeAt
+      newest?.madeAt &&
+      (engagement.state === "awaiting-approval" ||
+        (dispute?.state === "open" && dispute.against === "completion" && newest.answer === null))
         ? approvalBar(ctx, newest.madeAt)
         : null,
     completedAt,
-    /** Whether either party may cancel now: before Approval (#133). */
-    canCancel: canCancel(engagement).ok,
+    /** Whether either party may cancel now: before Approval (#133), and not while frozen (#137). */
+    canCancel: canCancel(engagement).ok && !chargeback?.frozen,
     cancellation: cancellationView(engagement, money.labour.unreleasedCents),
+    dispute,
+    /** Its Chargeback: frozen while the Admin decides it, then what went where (#137). */
+    chargeback,
     refunds: refunded,
     /** What happened, oldest first. Each later step adds its own. */
     activity: [
@@ -205,7 +337,26 @@ function common(
           : []),
       ]),
       ...(cancelledAt ? [{ event: "cancelled" as const, at: cancelledAt }] : []),
+      ...(dispute ? [{ event: "dispute.opened" as const, at: dispute.openedAt }] : []),
+      ...(dispute?.closedAt
+        ? [
+            {
+              event: `dispute.${dispute.state as "settled" | "decided"}` as const,
+              at: dispute.closedAt,
+            },
+          ]
+        : []),
       ...refunded.map((refund) => ({ event: "refunded" as const, at: refund.madeAt })),
+      ...(chargeback ? [{ event: "chargeback.opened" as const, at: chargeback.openedAt }] : []),
+      ...(chargeback?.decision
+        ? [{ event: "chargeback.decided" as const, at: chargeback.decision.decidedAt }]
+        : []),
+      ...updated.flatMap((each) => [
+        { event: "updated-quote.proposed" as const, at: each.proposedAt },
+        ...(each.answeredAt && each.state !== "proposed" && each.state !== "ended"
+          ? [{ event: UPDATED_QUOTE_EVENTS[each.state], at: each.answeredAt }]
+          : []),
+      ]),
     ].sort((a, b) => a.at.getTime() - b.at.getTime()),
   };
 }
@@ -302,9 +453,17 @@ function moneyView({ labour, materials, ...totals }: Money) {
     state:
       of.paidInCents > 0 && of.refundedCents === of.paidInCents
         ? ("refunded" as const)
-        : of.paidInCents > 0 && of.releasedCents + of.refundedCents === of.paidInCents
-          ? ("released" as const)
-          : ("unreleased" as const),
+        : // Back to the Client, by a Chargeback the Admin decided, and maybe a Refund (#137).
+          of.paidInCents > 0 &&
+            of.chargedBackCents > 0 &&
+            of.refundedCents + of.chargedBackCents === of.paidInCents
+          ? ("charged-back" as const)
+          : of.paidInCents > 0 && of.unreleasedCents === 0
+            ? of.chargedBackCents > 0
+              ? // Some released to the Artisan, the rest back to the Client by it.
+                ("partly-charged-back" as const)
+              : ("released" as const)
+            : ("unreleased" as const),
   });
   return {
     ...totals,

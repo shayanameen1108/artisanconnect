@@ -1,5 +1,6 @@
 import { EMAIL_CODE } from "@/domain/accounts/inputs";
 import type { MessageEvent } from "@/domain/conversations/inputs";
+import type { ENGAGEMENT_STATES, NOT_HIRED_REASONS } from "@/domain/schema";
 import { formatTime } from "@/domain/sa-days";
 
 // Every word the web app shows, in one place for later translation. Copy is a
@@ -13,6 +14,7 @@ export const copy = {
     artisan: { home: "Home", profile: "Profile", payouts: "Payouts", account: "Account" },
     admin: {
       queues: "Queues",
+      people: "People",
       payouts: "Payouts",
       admins: "Admins",
       audit: "Audit log",
@@ -60,7 +62,7 @@ export const copy = {
   },
   browse: {
     title: "Find Artisans",
-    lead: "Verified Artisans, one trade at a time. Those Available for Jobs come first, then by name. Nobody pays to be higher.",
+    lead: "Verified Artisans, one trade at a time. Those Available for Jobs come first, then by Review average, then by how many Reviews, then by name. Nobody pays to be higher.",
     chooseTrade: "Choose a trade",
     trade: "Trade",
     region: "Region",
@@ -137,6 +139,8 @@ export const copy = {
       "This edit waits for the Admin. Until then, everyone sees your Profile as it is above.",
     withdraw: "Withdraw",
     refused: (reason: string) => `Your last edit was refused: ${reason}`,
+    outOfView: (reason: string) =>
+      `Your Profile is out of view until you fix it: ${reason} Edit it; it shows again once the Admin accepts the edit.`,
     preview: "As anyone sees it",
   },
   signUp: {
@@ -283,6 +287,9 @@ export const copy = {
       matched: "We offer the Job to verified Artisans in its Region, ten at a time.",
       "invite-only": "Nobody sees the Job unless you invite them.",
     },
+    hireAgain: "Hire Again",
+    hireAgainDraftLead: (name: string) =>
+      `Filled in from your last Job with ${name}. Change anything, and add photos of this work. Once it is posted, only ${name} is invited to Quote.`,
     locked: "Locked at posting. A different trade or site is a new Job.",
     saveDraft: "Save Draft",
     saved: "Draft saved.",
@@ -312,6 +319,8 @@ export const copy = {
     editBeingChecked:
       "Your edit is being checked by the Admin. The Job shows as before until then.",
     editRefused: (reason: string) => `Your last edit was refused: ${reason}`,
+    outOfView: (reason: string) =>
+      `The Admin took this Job out of view until you fix it: ${reason} Edit it; Artisans see it again once the Admin accepts the edit.`,
     details: "Job details",
     none: "None given",
   },
@@ -326,6 +335,9 @@ export const copy = {
     invite: "Invite",
     invited: "Invited",
     quoted: "Quoted",
+    titleHireAgain: "Hire Again",
+    leadHireAgain: (name: string) => `Only ${name} is invited to this Job. Nobody else sees it.`,
+    emptyHireAgain: (name: string) => `${name} cannot be invited to this Job now.`,
   },
   verification: {
     title: "Verification",
@@ -584,24 +596,39 @@ export const copy = {
       "By card or Instant EFT. The Artisan is Hired once your Payment arrives, and your other Quotes are then declined.",
     notHired: (
       amount: string,
-      reason: "quote-ended" | "quote-changed" | "not-verified",
-      refund: "on-its-way" | "paid" | "owed",
+      reason: (typeof NOT_HIRED_REASONS)[number],
+      refund: "on-its-way" | "paid" | "owed" | "charged-back",
     ) =>
       `A Payment of ${amount} arrived after ${
         {
-          "quote-ended": "the Quote was no longer open",
-          "quote-changed": "the Quote was revised",
-          "not-verified": "the Artisan stopped being verified for this trade",
+          "quote-ended": "the Quote was no longer open, so nobody was Hired",
+          "quote-changed": "the Quote was revised, so nobody was Hired",
+          suspended: "an Account on it was suspended, so nobody was Hired",
+          "out-of-view": "the Job was taken out of view, so nobody was Hired",
+          "not-verified": "the Artisan stopped being verified for this trade, so nobody was Hired",
+          "updated-quote-ended": "the Updated Quote was no longer proposed, so it did not apply",
         }[reason]
-      }, so nobody was Hired. ${
+      }. ${
         {
           "on-its-way": "It is being refunded in full, Protection Fee included.",
           paid: "It was refunded in full, Protection Fee included.",
           owed: "Your bank could not take its Refund, so it is still owed to you in full, and we will pay it by bank transfer.",
+          "charged-back":
+            "Your bank sent it back to you by your Chargeback, so it is not refunded again.",
         }[refund]
       }`,
   },
   engagement: {
+    /** A Hired Job's badge: where its Engagement stands. */
+    states: {
+      paid: "Paid",
+      "work-started": "Work started",
+      "awaiting-approval": "Awaiting approval",
+      "fix-requested": "Fix requested",
+      disputed: "Disputed",
+      completed: "Completed",
+      cancelled: "Cancelled",
+    } satisfies Record<(typeof ENGAGEMENT_STATES)[number], string>,
     nextStepClient: "Paid. Next: Work started",
     nextStepClientLead: (start: string) =>
       `The Artisan starts on ${start}. Once they are working on site, you mark Work started here, which releases the Materials to them.`,
@@ -661,7 +688,7 @@ export const copy = {
       if (of.labourRefund) {
         return of.asClient
           ? `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released, ${of.labourRefund.amount}, is refunded to you on ${of.labourRefund.on}.`
-          : `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released, ${of.labourRefund.amount}, is refunded to the Client on ${of.labourRefund.on}. You may refund it sooner under Payments.`;
+          : `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released, ${of.labourRefund.amount}, is refunded to the Client on ${of.labourRefund.on}, unless you open a Dispute for work already done before then. You may refund it sooner under Payments.`;
       }
       return `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released was refunded ${of.asClient ? "to you" : "to the Client"}.`;
     },
@@ -683,6 +710,9 @@ export const copy = {
     cancelConfirm: (lead: string) => `Cancel this Job? ${lead} This cannot be undone.`,
     keepJob: "Keep the Job",
     completedTitle: "Completed",
+    hireAgain: "Hire Again",
+    hireAgainLead:
+      "Start a new Job for this Artisan, filled in from this one. Only they are invited to Quote.",
     completedClientLead: "The work is approved, and the Labour was released to the Artisan.",
     completedArtisanLead:
       "The work is approved, and the Labour was released to you, less the Artisan Fee.",
@@ -727,12 +757,19 @@ export const copy = {
     document: (index: number) => `Document ${index}`,
     certificateDocument: "Certificate",
     approvalBar: (by: string) => `Approved by silence on ${by}`,
+    restBar: (by: string) => `The Labour not in Dispute is released on ${by}`,
     payments: "Payments",
     parts: {
       materials: { title: "Materials", released: "Released at Work started" },
       labour: { title: "Labour", released: "Released at Approval" },
     },
-    partStates: { unreleased: "Paid in", released: "Released", refunded: "Refunded" },
+    partStates: {
+      unreleased: "Paid in",
+      released: "Released",
+      refunded: "Refunded",
+      "charged-back": "Charged back",
+      "partly-charged-back": "Released, part charged back",
+    },
     activity: "Activity",
     events: {
       "quote.sent": "Quote sent",
@@ -743,12 +780,22 @@ export const copy = {
       approved: "Approved",
       cancelled: "Cancelled",
       refunded: "Refunded",
+      "updated-quote.proposed": "Updated Quote proposed",
+      "updated-quote.withdrawn": "Updated Quote withdrawn",
+      "updated-quote.rejected": "Updated Quote rejected",
+      "updated-quote.accepted": "Updated Quote accepted and paid",
+      "dispute.opened": "Disputed",
+      "dispute.settled": "Dispute settled",
+      "dispute.decided": "Dispute decided by the Admin",
+      "chargeback.opened": "Card Payment charged back",
+      "chargeback.decided": "Chargeback decided by the Admin",
     },
     refunds: "Refunds",
     refundStates: {
       "on-its-way": "On its way",
       paid: "Refunded",
       owed: "Owed, paid by hand",
+      "charged-back": "Sent back by the bank's Chargeback instead",
     },
     refundLine: (materials: string | null, labour: string | null) =>
       [materials && `Materials ${materials}`, labour && `Labour ${labour}`]
@@ -768,12 +815,128 @@ export const copy = {
     paidIn: "Paid in",
     released: "Released",
     unreleased: "Not yet released",
+    held: "Held in Dispute",
     refunded: "Refunded",
+    chargedBack: "Back to the Client by the Chargeback",
     protectionFee: "Protection Fee (not refunded)",
     artisanFee: "Artisan Fee",
     artisanFeeShown: (percent: number) => `${percent}% of each Release`,
     hiredQuote: "Hired Quote",
     address: "Address",
+    chargeback: {
+      frozenTitle: "Frozen by a Chargeback",
+      frozenLead: (asClient: boolean) =>
+        asClient
+          ? "Your card Payment was charged back through your bank, so this Job is frozen and your Account is suspended. Nothing more is released, and nothing can be done on the Job until the Admin decides the money not yet released. Send a Support request to talk to us about it."
+          : "The Client charged back their card Payment through their bank, so this Job is frozen. Money already released to you stays yours. Nothing more is released, and nothing can be done on the Job until the Admin decides the money not yet released.",
+      decidedTitle: "Chargeback decided by the Admin",
+      decidedLead: (of: {
+        asClient: boolean;
+        released: string;
+        chargedBack: string | null;
+        refunded: string | null;
+        back: string;
+        reason: string;
+      }) =>
+        of.asClient
+          ? `The Admin decided the money your Chargeback froze: ${[
+              `${of.released} is released to the Artisan`,
+              of.chargedBack && `${of.chargedBack} stays with your bank's Chargeback`,
+              of.refunded && `${of.refunded} is refunded to you`,
+            ]
+              .filter(Boolean)
+              .join(", ")}. The Admin's reason: ${of.reason}`
+          : `The Admin decided the money the Client's Chargeback froze: ${of.released} is released to you, and ${of.back} goes back to the Client. The Admin's reason: ${of.reason}`,
+    },
+    dispute: {
+      title: "Disputed: the Admin decides",
+      lead: (of: { own: boolean; asClient: boolean; held: string }) =>
+        of.asClient
+          ? of.own
+            ? `You disputed part of the Labour, and ${of.held} is held. The Admin reads the Job, the Completion, and the Conversation, then splits what is held between the Artisan and you. Until then you may release it to the Artisan to settle.`
+            : `The Artisan opened a Dispute, and ${of.held} of the Labour is held. The Admin reads the Job, the Completion, and the Conversation, then splits what is held between the Artisan and you. Until then you may release it to the Artisan to settle.`
+          : of.own
+            ? `You opened a Dispute, and ${of.held} of the Labour is held. The Admin reads the Job, the Completion, and the Conversation, then splits what is held between you and the Client. Until then you may refund it to settle, under Payments.`
+            : `The Client disputed part of the Labour, and ${of.held} is held. The Admin reads the Job, the Completion, and the Conversation, then splits what is held between you and the Client. Until then you may refund it to settle, under Payments.`,
+      card: "Dispute",
+      against: {
+        completion: "Against the Completion",
+        "fix-request": "Against the Fix request",
+        cancellation: "Against the Cancellation's refund of the Labour",
+      },
+      openedBy: (who: string, at: string) => `Opened by ${who} · ${at}`,
+      you: "you",
+      theClient: "the Client",
+      theArtisan: "the Artisan",
+      named: "Disputed",
+      heldNow: "Held now",
+      reason: "Reason",
+      reasonHeld:
+        "The Content check was unsure of your reason, so only the Admin reads it and its photos.",
+      noReason: "The reason is for the Admin only.",
+      states: { open: "Open", settled: "Settled", decided: "Decided" },
+      settled: (at: string) => `Settled on ${at}, as nothing was held any more.`,
+      decided: (at: string) => `Decided by the Admin on ${at}. The decision is final.`,
+      releasedTo: (asClient: boolean) => (asClient ? "Released to the Artisan" : "Released to you"),
+      refundedTo: (asClient: boolean) => (asClient ? "Refunded to you" : "Refunded to the Client"),
+      decisionReason: "The Admin's reason",
+      photo: (index: number) => `Dispute photo ${index}`,
+      open: (asClient: boolean) => (asClient ? "Dispute part of the Labour" : "Open a Dispute"),
+      clientLead: (labour: string) =>
+        `Name how much of the Labour you dispute, up to ${labour}, and why. Only that is held for the Admin to decide; the rest is released when you approve or when the seven days end.`,
+      artisanLead: (labour: string, until: string | null) =>
+        `All the Labour not yet released, ${labour}, is held for the Admin to decide${until ? `, and is not refunded to the Client. Open it before ${until}` : ""}. Say why the work is done as quoted.`,
+      amount: "Amount of the Labour disputed, in rands",
+      why: "Why",
+      photos: "Photos (optional)",
+      photosHint: (max: number) => `Up to ${max} photos.`,
+      send: "Open the Dispute",
+      confirm: "Open a Dispute? The Admin's decision is final.",
+      cancel: "Cancel",
+      release: "Release from the Dispute",
+      releaseLead: (held: string) =>
+        `Release some or all of the ${held} held to the Artisan. Once nothing is held, the Dispute is settled.`,
+      releaseAmount: "Amount to release, in rands",
+      releaseSend: "Release",
+      releaseConfirm: (amount: string) =>
+        `Release ${amount} to the Artisan? This cannot be undone.`,
+      approveRest: "Approve the Labour not in Dispute",
+      approveRestConfirm: (rest: string) =>
+        `Approve the work but for what is in Dispute? This releases ${rest} to the Artisan, and cannot be undone.`,
+    },
+    updatedQuote: {
+      title: "Updated Quote",
+      proposedClient: (at: string) => `The Artisan proposed it ${at}.`,
+      proposedArtisan: (at: string) => `You proposed it ${at}. It is waiting for the Client.`,
+      from: "Now",
+      to: "Updated",
+      total: "Total",
+      difference: "Difference",
+      fee: (percent: number) => `Protection Fee (${percent}%)`,
+      youPay: "You pay",
+      acknowledge: (fee: string) =>
+        `I understand the Protection Fee of ${fee} is not refunded, whatever happens next.`,
+      pay: (amount: string) => `Pay ${amount}`,
+      payLead:
+        "By card or Instant EFT. The new price applies once your Payment arrives. Reject it, and the price stays as it is.",
+      reject: "Reject",
+      rejectConfirm: "Reject this Updated Quote? The price stays as it is.",
+      withdraw: "Withdraw",
+      withdrawConfirm: "Withdraw your Updated Quote? The Client is told.",
+      waiting:
+        "You cannot mark the work complete while it waits. Once the Client pays the difference it applies; if they reject it, the price stays as it is.",
+      propose: "Propose an Updated Quote",
+      proposeLead:
+        "Does the site differ from the Job? Before you mark the work complete, propose new Labour and Materials. Neither may go down; to lower the price, refund instead. It applies only once the Client pays the difference.",
+      labour: "Labour",
+      materials: "Materials",
+      atLeast: (amount: string) => `At least ${amount}, the price now.`,
+      clientSupplies: "The Client supplies the materials, so they stay at zero.",
+      send: "Propose",
+      sendConfirm: (adds: string) =>
+        `Propose this Updated Quote? The Client is asked to pay the difference, ${adds}.`,
+      cancel: "Cancel",
+    },
   },
   fakeCheckout: {
     title: "Fake checkout",
@@ -830,6 +993,12 @@ export const copy = {
       approved: "Approved",
       refund: "Refunded",
       cancelled: "Cancelled",
+      "dispute.opened": "Disputed",
+      "dispute.released": "Released in Dispute",
+      "dispute.settled": "Dispute settled",
+      "dispute.decided": "Dispute decided by the Admin",
+      "chargeback.opened": "Card Payment charged back",
+      "chargeback.decided": "Chargeback decided by the Admin",
     } satisfies Record<MessageEvent, string>,
     photo: (index: number) => `Photo ${index}`,
     message: "Message",
@@ -904,6 +1073,62 @@ export const copy = {
       held: "Your names are being checked.",
     },
   },
+  review: {
+    title: "Reviews",
+    theArtisan: "the Artisan",
+    theClient: "the Client",
+    write: (of: string) => `Review ${of}`,
+    writeLead: (by: string) =>
+      `One rating from 1 to 5, and a comment if you like, by ${by}. It cannot be changed or withdrawn. The Admin checks every Review, and neither of you reads the other's until both have written or the seven days pass.`,
+    rating: "Rating",
+    outOf: (rating: number) => `${rating} out of 5`,
+    comment: "Comment (optional)",
+    send: "Send the Review",
+    openUntil: (by: string) => `Each of you may write one Review until ${by}.`,
+    closed: "The seven days to write Reviews are over.",
+    yours: "Your Review",
+    theirs: (of: string) => `The Review from ${of}`,
+    states: {
+      "being-checked": "Being checked",
+      published: "Published",
+      refused: "Refused",
+      removed: "Removed",
+    },
+    beingChecked: "The Admin checks it before it is shown.",
+    endedLead: (state: string, reason: string) =>
+      `The Admin ${state === "removed" ? "removed" : "refused"} it. ${reason}`,
+    notYet: "You have not written one yet.",
+    notWritten: "You did not write one.",
+    theirsWaiting: (of: string, by: string) =>
+      `Shown once you have written yours, or from ${by}, and once the Admin has checked it, if ${of} writes one.`,
+    theirsNone: (of: string) => `No Review from ${of} is shown.`,
+    report: "Report this Review",
+    more: "Show more Reviews",
+    someone: "An Account",
+    ofClient: "Reviews of the Client",
+    noClientReviews: "No Reviews of this Client yet.",
+  },
+  report: {
+    action: "Report",
+    job: "Report this Job",
+    profile: "Report this Profile",
+    why: "Why are you reporting it?",
+    note: "Anything the Admin should know (optional)",
+    lead: "Only the Admin reads your Report. You are told it was received; nobody is told who reported.",
+    send: "Send to the Admin",
+    cancel: "Cancel",
+    made: "Reported. The Admin has it.",
+  },
+  standing: {
+    suspended: "Your Account is suspended",
+    suspendedLead: (reason: string) =>
+      `${reason} While it is suspended you cannot post a Job, Quote, Hire, invite, or be offered a Job. Your paid Jobs go on.`,
+    contest: "Write to support",
+    since: (when: string) => `Since ${when}`,
+    warnings: "Warnings",
+    warned: (when: string) => `Warned ${when}`,
+    none: "No warnings.",
+  },
   support: {
     title: "Contact support",
     lead: "Write to the Admin about anything on ArtisanConnect. The answer comes to your Email.",
@@ -976,6 +1201,8 @@ export const copy = {
       eachRow: "Decide each row on its own",
       rowsNow: "Each row as it stands now",
       noRows: "Nothing on this item is left to decide.",
+      splitRefunded: "Refunded to the Client",
+      splitOf: (total: string, whole = "held") => `Of ${total} ${whole}`,
     },
     admins: {
       title: "Admins",
@@ -1005,6 +1232,65 @@ export const copy = {
       hold: "Hold Payouts",
       lift: "Lift the hold",
       history: "Money history",
+    },
+    people: {
+      title: "People",
+      lead: "Find a Client or an Artisan by name or Email, and act on them: warn, suspend, or lift a Suspension; hold or free an Artisan's Payouts. Each is told to the Account and written to the audit log.",
+      search: "Name or Email",
+      find: "Find",
+      empty: "Nobody matches.",
+      suspended: "Suspended",
+      payoutsHeld: "Payouts held",
+      signedUp: (when: string) => `Signed up ${when}`,
+      act: "Act on this Account",
+      suspendedSince: (when: string) => `Suspended since ${when}`,
+      acts: { warn: "Warn", suspend: "Suspend", lift: "Lift the Suspension" },
+      reason: "Reason",
+      liftNote: "Note (optional)",
+      told: {
+        warn: "Told: the Account, with the reason. Warnings stay.",
+        suspend:
+          "Told: the Account, with the reason. Its Open Jobs close and its Sent Quotes are Withdrawn; its paid Jobs go on.",
+        lift: "Told: the Account. Its warnings stay.",
+      },
+      record: "Record",
+      done: {
+        warn: "Warned.",
+        suspend: "Suspended.",
+        lift: "The Suspension is lifted.",
+      },
+      history: "Warnings and Suspensions",
+      noHistory: "No warnings or Suspensions.",
+      warned: (reason: string, leaving: boolean) =>
+        `Warned${leaving ? " for Leaving" : ""}: ${reason}`,
+      suspendedFor: (reason: string, leaving: boolean, bySystem: boolean) =>
+        `Suspended${leaving ? " for Leaving" : ""}${bySystem ? " by the system (Chargeback)" : ""}: ${reason}`,
+      lifted: "Suspension lifted",
+      payoutsHeldLead: "Their Payouts are held: they wait until the hold is lifted.",
+      payoutsFreeLead: "Their Payouts go in each daily run.",
+      relationships: {
+        title: "Client Relationships",
+        lead: "Protected Relationship Period: 365 days from the pair's first Payment. It never renews.",
+        none: "No Payment with anyone yet.",
+        running: "Running",
+        ended: "Ended",
+        period: (from: string, until: string) => `First Payment ${from} · protected until ${until}`,
+      },
+      artisanRecord: {
+        title: "Artisan record",
+        byArtisan: "Cancelled by the Artisan",
+        byClients: "Cancelled by Clients before Work started",
+        disputes: "Disputes decided against the Artisan",
+        cancellation: (
+          job: string,
+          by: "client" | "artisan",
+          after: boolean,
+          reason: string | null,
+        ) =>
+          `${job}: cancelled by the ${by === "client" ? "Client" : "Artisan"} ${after ? "after" : "before"} Work started.${reason ? ` “${reason}”` : ""}`,
+        dispute: (job: string, refunded: string, held: string) =>
+          `${job}: Dispute decided, ${refunded} of the ${held} held refunded to the Client.`,
+      },
     },
     history: {
       lead: "Each Release owed to this Artisan, newest first, with every Payout of it. A Payout the bank refused or sent back leaves the Release owed again; the next goes to a new Payout account once you accept one in Verification.",
