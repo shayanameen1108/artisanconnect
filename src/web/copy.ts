@@ -1,8 +1,8 @@
 import { EMAIL_CODE } from "@/domain/accounts/inputs";
 import type { MessageEvent } from "@/domain/conversations/inputs";
 import type { ENGAGEMENT_STATES, NOT_HIRED_REASONS } from "@/domain/schema";
-import { formatTime } from "@/domain/sa-days";
-import type { ServiceCategory } from "@/domain/service-categories";
+import { formatTime } from "@/domain/shared/sa-days";
+import type { ServiceCategory } from "@/domain/shared/service-categories";
 
 // Every word the web app shows, in one place for later translation, in the
 // glossary's words (GLOSSARY.md).
@@ -227,8 +227,6 @@ export const copy = {
     postJob: "Post a Job",
     cancel: "Cancel",
     gallery: "Work photos",
-    previous: "Previous photo",
-    next: "Next photo",
     verifiedFor: "Verified for",
     signUp: "Sign up",
     signIn: "Sign in",

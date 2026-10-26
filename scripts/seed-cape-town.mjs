@@ -4,7 +4,7 @@
 // suburb the City creates later. A later city is a script like this one and
 // its own migration.
 //
-//   node scripts/seed-cape-town.mjs migrations/0008_cape-town.sql
+//   node scripts/seed-cape-town.mjs db/migrations/0008_cape-town.sql
 //
 // The data is the City of Cape Town's open data (odp-cctegis.opendata.arcgis.com):
 // "Official Planning Suburbs", "Development Management Districts", and
@@ -13,7 +13,7 @@
 // address points goes to the district covering most of its area.
 
 import { writeFileSync } from "node:fs";
-import { suburbKey } from "../src/domain/regions/places.ts";
+import { suburbKey } from "../src/domain/shared/places.ts";
 
 const SERVICES = "https://esapqa.capetown.gov.za/agsext/rest/services/Theme_Based";
 const SUBURBS = `${SERVICES}/ODP_SPLIT_5/FeatureServer/3`;

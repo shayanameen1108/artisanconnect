@@ -1,8 +1,8 @@
-import { describe, expect, test } from "vitest";
-import type { Actor } from "@/domain/actor";
+import { describe, expect, test } from "vite-plus/test";
+import type { Actor } from "@/domain/shared/actor";
 import type { CreateRefund, Webhook } from "@/domain/ports";
 import type { FakePayments } from "@/domain/fakes/payments";
-import { formatRands } from "@/domain/money";
+import { formatRands } from "@/domain/shared/money";
 import { collectionOf } from "../support/given";
 import { releasesTo } from "../support/money";
 import { createHarness, type Harness } from "../support/harness";
@@ -448,9 +448,15 @@ describe("accepting an Updated Quote by paying", () => {
       materials: "650",
     });
 
+    // The extra Materials sit on the Materials line. There is no third line to refund.
+    expect((await domain.jobs.viewAsArtisan(artisan.actor, { jobId }))?.engagement).toMatchObject({
+      refundable: { materialsCents: 65_000, labourCents: 180_000 },
+    });
+
     await given.workStarted(client, engagementId);
 
     expect((await domain.jobs.viewAsArtisan(artisan.actor, { jobId }))?.engagement).toMatchObject({
+      refundable: { materialsCents: 0, labourCents: 180_000 },
       money: {
         releasedCents: 65_000,
         payments: [

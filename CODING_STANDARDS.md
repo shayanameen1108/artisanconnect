@@ -1,6 +1,6 @@
 # Coding standards
 
-The judgement calls a reviewer checks. Anything mechanical is a check instead: oxlint (including the rule that pages and components import no domain rule), `scripts/check-tokens.mjs` (no colour or arbitrary value outside `src/styles.css`, and spacing on the 4px grid), oxfmt, `tsc`, the tests, and CI (`.github/workflows/check.yml`).
+The judgement calls a reviewer checks. Anything mechanical is a check instead: `vp check`, which formats, lints (including the rule that pages and components import no domain rule), and type checks; `scripts/check-tokens.mjs` (no colour or arbitrary value outside `src/styles.css`, and spacing on the 4px grid); the tests; and CI (`.github/workflows/check.yml`).
 
 ## Sources of truth
 
@@ -13,7 +13,9 @@ Use Cloudflare (Workers, D1, R2, Images, Workers AI, Turnstile, the Rate Limitin
 ## Design
 
 - shadcn first: a component shadcn has is added with its CLI and used as written; it changes only through the tokens in `src/styles.css` and its variants.
-- Type in one scale: a page's title `text-2xl`, a section's `text-lg`, both weight 600; money in tabular figures.
+- Work photos on a Profile are a grid, so every photo is on the page. A carousel hides them.
+- Type in one scale: a page's title `text-2xl`, a section's `text-lg`, both weight 600; numbers and money in tabular figures.
+- A link that goes to a page is a link. A button is the one action on the screen. A row of buttons that only navigate is a list of links.
 - Copy lives in `src/web/copy.ts`, in the glossary's words.
 - One primary action a screen; money as lines; a deadline as a date and a countdown; a loading, an empty, and an error state for every list.
 

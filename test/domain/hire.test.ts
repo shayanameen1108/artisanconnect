@@ -1,8 +1,8 @@
-import { describe, expect, test } from "vitest";
-import type { Actor, AdminActor } from "@/domain/actor";
+import { describe, expect, test } from "vite-plus/test";
+import type { Actor, AdminActor } from "@/domain/shared/actor";
 import { createHarness, type Harness } from "../support/harness";
 import { createFakePayments, type FakePayments } from "@/domain/fakes/payments";
-import { formatRands } from "@/domain/money";
+import { formatRands } from "@/domain/shared/money";
 import { collectionOf } from "../support/given";
 
 // Hire by Payment (#126, ADR 0004): the Client Hires a Sent Quote by paying
@@ -523,6 +523,32 @@ describe("payment events", () => {
 });
 
 describe("the Hire is asked again when the Payment arrives", () => {
+  test("a Payment for a Quote Declined because another was Hired is refunded whole", async () => {
+    const { domain, given, payments } = await createHarness();
+    const client = await given.client();
+    const first = await given.matchableArtisan({ name: "Sipho Dlamini" });
+    const second = await given.matchableArtisan({ name: "Themba Nkosi" });
+    const jobId = await given.openJob(client);
+    const abandonedQuote = await given.sentQuote(first, jobId);
+    const hiredQuote = await given.sentQuote(second, jobId);
+    const abandoned = await given.checkout(client, abandonedQuote);
+    await given.hired(client, hiredQuote);
+
+    await given.paid(abandoned);
+
+    expect(payments.calls.filter((call) => call.operation === "refund")).toEqual([
+      {
+        operation: "refund",
+        input: expect.objectContaining({ collectionId: abandoned, amountCents: 210_000 }),
+      },
+    ]);
+    expect(await domain.jobs.view(client.actor, { jobId })).toMatchObject({
+      state: "hired",
+      engagement: expect.objectContaining({ state: "paid" }),
+      notHired: [expect.objectContaining({ amountCents: 210_000, reason: "quote-ended" })],
+    });
+  });
+
   test("a second Payment, after the Quote was Hired by another, is refunded whole and Hires nothing", async () => {
     const { domain, given, payments } = await createHarness();
     const { client, artisan, jobId, quoteId } = await quoted(given);
