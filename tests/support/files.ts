@@ -6,7 +6,7 @@ import webpPhoto from "../fixtures/photo.webp?inline";
 
 // Files as a party's device would send them. Photos, voice notes, videos, and
 // PDFs that only a real camera, recorder, or printer makes are in
-// test/fixtures; the containers whose length a test needs to set are built
+// tests/fixtures; the containers whose length a test needs to set are built
 // byte by byte.
 
 /**

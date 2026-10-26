@@ -21,18 +21,18 @@ export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(import.meta.dirname, "db/migrations"));
   return {
     resolve: { tsconfigPaths: true },
-    assetsInclude: ["test/fixtures/**/*.heic"],
+    assetsInclude: ["tests/fixtures/**/*.heic"],
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./.void-wrangler.jsonc" },
-        main: "./test/support/worker.ts",
+        main: "./tests/support/worker.ts",
         // The plugin default is remote. Workers AI has no local simulation.
         remoteBindings: false,
         miniflare: { bindings: { TEST_MIGRATIONS: migrations } },
       }),
     ],
     test: {
-      include: ["test/**/*.test.ts"],
+      include: ["tests/**/*.test.ts"],
       // A test drives whole Engagements through workerd, and the slowest take
       // about five seconds alone: past Vitest's default when the machine is busy.
       testTimeout: 20_000,

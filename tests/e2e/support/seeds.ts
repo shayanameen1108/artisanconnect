@@ -1,13 +1,13 @@
 import { createDomain, type DomainConfig } from "@/domain";
 import type { Clock } from "@/domain/ports";
 import type { AdminActor } from "@/domain/shared/actor";
-import { createFakeContentReader } from "../../test/support/fakes/content-reader";
-import { createFakeMailer } from "../../test/support/fakes/mailer";
+import { createFakeContentReader } from "../../support/fakes/content-reader";
+import { createFakeMailer } from "../../support/fakes/mailer";
 import { saDay } from "@/domain/shared/sa-days";
 import { configFromEnv, fakePaymentsFromEnv, portsFromEnv } from "@/worker/ports";
-import { webmOpus } from "../../test/support/files";
-import { given } from "../../test/support/given";
-import { pagesOf, textPdf } from "../../test/support/pdfs";
+import { webmOpus } from "../../support/files";
+import { given } from "../../support/given";
+import { pagesOf, textPdf } from "../../support/pdfs";
 
 // What a smoke test needs in the local app's D1, made by the domain tests'
 // own builders through the module's commands. The Content check passes

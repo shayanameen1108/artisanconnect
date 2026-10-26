@@ -34,7 +34,7 @@ export default defineConfig({
     overrides: [
       {
         // A test stubs a fake's method by keeping the original to put back.
-        files: ["test/**"],
+        files: ["tests/**"],
         rules: {
           "typescript/unbound-method": "off",
         },

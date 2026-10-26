@@ -30,7 +30,7 @@ const SUBMITTED_MS = 30_000;
 
 /** Runs a seed against the local app's D1, and gives what it printed. */
 export function seed<T>(...args: string[]): T {
-  const output = execFileSync(process.execPath, ["e2e/support/seed.mjs", ...args], {
+  const output = execFileSync(process.execPath, ["tests/e2e/support/seed.mjs", ...args], {
     encoding: "utf8",
   });
   return JSON.parse(output.trim().split("\n").at(-1)!);
