@@ -1,13 +1,13 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { system } from "../actor";
 import type { Context, Write } from "../context";
-import { defineHeldKind } from "../content/held";
+import { defineHeldKind, refusedFor } from "../content/held";
 import { jobBlocks } from "../jobs/held";
 import { jobRow } from "../jobs/rows";
 import { accountSidebar } from "../quotes/held";
 import type { Block } from "../queues";
-import { messages, queueItems } from "../schema";
-import { messagePhotoPath } from "./parties";
+import { messages } from "../schema";
+import { messageFilePath } from "./parties";
 import {
   conversationRow,
   messageRow,
@@ -76,7 +76,17 @@ export const heldMessage = defineHeldKind("held.message", {
         {
           key: "check",
           label: "Content check",
-          blocks: [{ kind: "text", text: message.heldFor ?? "The Content check could not run." }],
+          blocks: [
+            { kind: "text", text: message.heldFor ?? "The Content check could not run." },
+            ...(message.heldFilesText
+              ? [
+                  {
+                    kind: "text" as const,
+                    text: `Read from its files:\n\n${message.heldFilesText}`,
+                  },
+                ]
+              : []),
+          ],
         },
       ],
       sidebar: await accountSidebar(
@@ -88,22 +98,29 @@ export const heldMessage = defineHeldKind("held.message", {
   },
 });
 
-/** What the Admin reads of a message: its text and its photos. */
+/** What the Admin reads of a message: its text, its photos, and its voice notes and PDFs. */
 function messageBlocks(message: MessageRow): Block[] {
   const blocks: Block[] = [];
   if (message.text) blocks.push({ kind: "text", text: message.text });
-  if (message.photos.length > 0) {
+  const files = [...message.photos, ...message.files];
+  if (files.length > 0) {
+    const counted: Partial<Record<(typeof files)[number]["kind"], number>> = {};
     blocks.push({
       kind: "files",
-      files: message.photos.map((photo, index) => ({
-        kind: "photo",
-        label: `Photo ${index + 1}`,
-        href: messagePhotoPath(photo),
-      })),
+      files: files.map((file) => {
+        counted[file.kind] = (counted[file.kind] ?? 0) + 1;
+        return {
+          kind: file.kind,
+          label: `${FILE_LABELS[file.kind]} ${counted[file.kind]}`,
+          href: messageFilePath(message.id, file),
+        };
+      }),
     });
   }
   return blocks;
 }
+
+const FILE_LABELS = { photo: "Photo", "voice-note": "Voice note", pdf: "PDF" } as const;
 
 /** The writes that Hold a message for the Admin's Pre-check. */
 export function holdWrites(
@@ -132,13 +149,7 @@ export async function withdrawHeldMessage(ctx: Context, messageId: string): Prom
 export async function refusalsOf(ctx: Context, refused: readonly { id: string }[]) {
   const reasons = new Map<string, string>();
   for (const message of refused) {
-    const [newest] = await ctx.db
-      .select({ reason: queueItems.reason })
-      .from(queueItems)
-      .where(and(eq(queueItems.kind, heldMessage.kind), eq(queueItems.subjectId, message.id)))
-      .orderBy(desc(queueItems.raisedAt))
-      .limit(1);
-    reasons.set(message.id, newest?.reason ?? "");
+    reasons.set(message.id, (await refusedFor(ctx, heldMessage.kind, message.id)) ?? "");
   }
   return reasons;
 }

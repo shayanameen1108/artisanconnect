@@ -18,7 +18,7 @@ import {
   type ServiceCategory,
 } from "../service-categories";
 import { tell } from "../tells";
-import { uploadFile, UPLOAD_CONTEXTS, type StoredFile } from "../uploads";
+import { discardFiles, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
 import {
   CATEGORY_CREDENTIALS,
   CHECKS,
@@ -558,6 +558,17 @@ async function parseSubmission(
     );
   }
   if (heldKey && (await heldByOther(ctx, heldKey, artisanId))) return heldByAnother(kind);
+  if (
+    kind === "payout-account" &&
+    standing
+      .checks(slotOf(kind, null))
+      .some((check) => check.heldKey === heldKey && check.payoutsStoppedAt)
+  ) {
+    return refuse(
+      "stopped",
+      "Your bank refused or sent back a Payout to this account, so nothing more is sent to it. Send a bank letter for another account.",
+    );
+  }
 
   for (const part of CHECKS[kind].files) {
     const count = input.files[part.part]?.length ?? 0;
@@ -628,13 +639,6 @@ function alreadyWaiting(kind: CheckKind) {
     "waiting",
     `Your ${CHECKS[kind].name.toLowerCase()} is waiting for the Admin. You can send another once it is decided.`,
   );
-}
-
-async function discardFiles(ctx: Context, files: StoredFile[]) {
-  const keys = files.flatMap((file) =>
-    file.kind === "photo" ? [file.key, file.thumbnailKey] : [file.key],
-  );
-  if (keys.length > 0) await ctx.ports.files.delete(keys).catch(() => {});
 }
 
 /** The write that raises the Artisan's Verification item, unless one is open. */
@@ -839,7 +843,11 @@ function acceptedRow(check: CheckRow, today: string): ItemRow {
   return {
     id: check.id,
     title: titleOf(check),
-    state: expired ? "Badge, expired" : "Badge",
+    state: check.payoutsStoppedAt
+      ? "Badge, stopped by the bank"
+      : expired
+        ? "Badge, expired"
+        : "Badge",
     blocks: [{ kind: "facts", facts: sentFacts(check) }],
     reads: [{ key: "documents", label: "the documents" }],
     decisions: [
@@ -933,7 +941,14 @@ function acceptFields(check: CheckRow): DecisionField[] {
 
 // The Artisan's view of one slot
 
-type SlotState = "missing" | "waiting" | "accepted" | "expired" | "rejected" | "removed";
+type SlotState =
+  | "missing"
+  | "waiting"
+  | "accepted"
+  | "expired"
+  | "stopped"
+  | "rejected"
+  | "removed";
 
 function slotView(
   standing: Standing,
@@ -955,7 +970,8 @@ function slotView(
   } else if (newest?.state === "removed") {
     state = "removed";
     reason = newest.removedReason;
-  } else if (accepted) state = "expired";
+  } else if (accepted?.payoutsStoppedAt) state = "stopped";
+  else if (accepted) state = "expired";
   else state = "missing";
 
   // A replacement sent while the badge is current: waiting, or rejected since.
@@ -1002,6 +1018,11 @@ async function checksOf(ctx: Context, artisanId: string): Promise<CheckRow[]> {
     .from(verificationChecks)
     .where(eq(verificationChecks.artisanId, artisanId))
     .orderBy(asc(verificationChecks.submittedAt), asc(verificationChecks.id));
+}
+
+/** The Artisan's current Payout account, which Payouts are sent to; null if they have none. */
+export async function currentPayoutAccount(ctx: Context, artisanId: string) {
+  return (await standingOf(ctx, artisanId)).current("payout-account");
 }
 
 async function standingOf(ctx: Context, artisanId: string): Promise<Standing> {

@@ -1,5 +1,6 @@
 import { EMAIL_CODE } from "@/domain/accounts/inputs";
 import type { MessageEvent } from "@/domain/conversations/inputs";
+import { formatTime } from "@/domain/sa-days";
 
 // Every word the web app shows, in one place for later translation. Copy is a
 // placeholder until final copy is written (#111).
@@ -10,8 +11,19 @@ export const copy = {
     visitor: { findArtisans: "Find Artisans", signUp: "Sign up", signIn: "Sign in" },
     client: { jobs: "Jobs", findArtisans: "Find Artisans", account: "Account" },
     artisan: { home: "Home", profile: "Profile", payouts: "Payouts", account: "Account" },
-    admin: { queues: "Queues", admins: "Admins", audit: "Audit log", signOut: "Sign out" },
+    admin: {
+      queues: "Queues",
+      payouts: "Payouts",
+      admins: "Admins",
+      audit: "Audit log",
+      signOut: "Sign out",
+    },
     notices: "Notices",
+  },
+  notFound: {
+    title: "No such page",
+    lead: "Nothing is at this address on ArtisanConnect. The link may be mistyped or out of date.",
+    home: "Go to ArtisanConnect",
   },
   landing: {
     title: "Hire a verified Artisan in Cape Town",
@@ -340,9 +352,12 @@ export const copy = {
       waiting: "Waiting for the Admin",
       accepted: "Badge",
       expired: "Expired",
+      stopped: "Stopped by your bank",
       rejected: "Rejected",
       removed: "Badge removed",
     },
+    stopped:
+      "Your bank refused or sent back a Payout to this account, so it is no longer current and nothing more is sent to it. You may still Quote. Send a bank letter for another account; your Payouts wait until the Admin accepts it.",
     notNeeded: "Only needed with a foreign passport.",
     optionalCheck: "Optional",
     expires: (day: string) => `Expires ${day}`,
@@ -424,6 +439,50 @@ export const copy = {
     profile: "Profile",
     profileLead: "Your public page, with your work photos, badges, and Reviews.",
     openProfile: "Open",
+    payouts: "Payouts",
+    openPayouts: "Open",
+    unpaid: "Still to be paid",
+    paid: "Paid to you",
+    payoutsHeld: "Held by the Admin",
+    payoutsStopped: "A Payout came back from your bank",
+  },
+  payouts: {
+    title: "Payouts",
+    lead: "Each Release is paid to your Payout account in the next daily run, less the Artisan Fee. A Receipt is emailed for each Payout.",
+    unpaid: "Still to be paid",
+    paid: "Paid to you",
+    held: "The Admin holds your Payouts. They wait until the hold is lifted; you are told when it is.",
+    noAccount:
+      "You have no current Payout account, so your Payouts wait. Send a bank letter in Verification.",
+    stopped:
+      "Your bank refused or sent back a Payout, so that Payout account is no longer current and nothing more is sent to it. The money is still owed to you. Send a bank letter for another account in Verification: everything waiting goes in the first daily run after the Admin accepts it.",
+    openVerification: "Open Verification",
+    empty:
+      "No Releases yet. The Materials are released at Work started, and the Labour at Approval.",
+    released: (part: string, when: string) => `${part} released ${when}`,
+    parts: { materials: "Materials", labour: "Labour" },
+    releasedAmount: "Released",
+    artisanFee: "Artisan Fee",
+    amount: "Paid to you",
+    reference: (reference: string) => `Reference ${reference}`,
+    paidOn: (when: string) => `Paid ${when}`,
+    states: {
+      waiting: "Waiting",
+      sent: "On its way",
+      paid: "Paid",
+      refused: "Refused",
+      "sent-back": "Sent back",
+    },
+    waitingFor: {
+      "next-run": "Goes in the next daily run",
+      hold: "Held by the Admin",
+      "payout-account": "Waiting for a Payout account",
+    },
+    sent: "Sent to your bank.",
+    refused: "Your bank refused this Payout.",
+    earlier: (reference: string, state: string, when: string) =>
+      `Payout ${reference}: ${state.toLowerCase()} by your bank ${when}`,
+    earlierStates: { refused: "Refused", "sent-back": "Sent back" },
   },
   quote: {
     write: "Write a Quote",
@@ -510,6 +569,220 @@ export const copy = {
     ended: "No longer open",
     sent: (when: string) => `Sent ${when}`,
     expires: (when: string) => `Expires ${when}`,
+    hire: "Hire",
+    startPassed: "Start date passed",
+    startPassedLead:
+      "Ask the Artisan to revise this Quote in your Conversation; then you can Hire it.",
+    hireTitle: "Hire by paying for this Quote",
+    hireQuote: "Quote",
+    hireFee: (percent: number) => `Protection Fee (${percent}%)`,
+    hirePayment: "You pay",
+    hireAcknowledge: (fee: string) =>
+      `I understand the Protection Fee of ${fee} is not refunded, whatever happens next.`,
+    hirePay: (amount: string) => `Pay ${amount}`,
+    hireLead:
+      "By card or Instant EFT. The Artisan is Hired once your Payment arrives, and your other Quotes are then declined.",
+    notHired: (
+      amount: string,
+      reason: "quote-ended" | "quote-changed" | "not-verified",
+      refund: "on-its-way" | "paid" | "owed",
+    ) =>
+      `A Payment of ${amount} arrived after ${
+        {
+          "quote-ended": "the Quote was no longer open",
+          "quote-changed": "the Quote was revised",
+          "not-verified": "the Artisan stopped being verified for this trade",
+        }[reason]
+      }, so nobody was Hired. ${
+        {
+          "on-its-way": "It is being refunded in full, Protection Fee included.",
+          paid: "It was refunded in full, Protection Fee included.",
+          owed: "Your bank could not take its Refund, so it is still owed to you in full, and we will pay it by bank transfer.",
+        }[refund]
+      }`,
+  },
+  engagement: {
+    nextStepClient: "Paid. Next: Work started",
+    nextStepClientLead: (start: string) =>
+      `The Artisan starts on ${start}. Once they are working on site, you mark Work started here, which releases the Materials to them.`,
+    nextStepArtisan: "You were Hired",
+    nextStepArtisanLead: (start: string, days: string) =>
+      `Start on ${start}, for ${days}. Once you are working on site, tap I've started. Unless the Client answers Not started within 24 hours, it is Work started, which releases the Materials to you.`,
+    claimedClient: "The Artisan says work has started",
+    claimedClientLead: (answerBy: string) =>
+      `If they are working on site, mark Work started. If not, answer Not started by ${answerBy}; otherwise it is Work started then, and the Materials are released to them.`,
+    claimedArtisan: "You said you've started",
+    claimedArtisanLead: (answerBy: string) =>
+      `Unless the Client answers Not started by ${answerBy}, it is Work started then, and the Materials are released to you.`,
+    workStarted: "Work started",
+    workStartedClientLead:
+      "The Materials were released to the Artisan. Next, the Artisan marks the work complete, and your Approval releases the Labour.",
+    workStartedArtisanLead:
+      "The Materials were released to you, less the Artisan Fee. Once the work is done, you mark it complete, and the Client's Approval releases the Labour.",
+    markWorkStarted: "Work started",
+    markWorkStartedConfirm: (materials: string | null) =>
+      materials
+        ? `Mark Work started? This releases the Materials, ${materials}, to the Artisan, and cannot be undone.`
+        : "Mark Work started? This cannot be undone.",
+    notStarted: "Not started",
+    notStartedConfirm: "Tell the Artisan that work has not started on site?",
+    claimStarted: "I've started",
+    claimFrom: (start: string) =>
+      `You can tap I've started from ${start}, the Quote's start date. Starting sooner? The Client can mark Work started.`,
+    claimStartedConfirm:
+      "Tell the Client you are working on site? Unless they answer Not started within 24 hours, it is Work started.",
+    awaitingClient: "The work is marked complete",
+    awaitingClientLead: (by: string) =>
+      `Check the work below. Approve it to release the Labour to the Artisan, or ask for a fix. If you do not answer by ${by}, it is Approved then.`,
+    awaitingArtisan: "Waiting for the Client's Approval",
+    awaitingArtisanLead: (by: string) =>
+      `The Client approves the work or asks for a fix. If they do not answer by ${by}, it is Approved then, and the Labour is released to you.`,
+    fixClient: "You asked for a fix",
+    fixClientLead:
+      "The Artisan puts it right and marks the work complete again, which gives you a new seven days to answer.",
+    fixArtisan: "The Client asked for a fix",
+    fixArtisanLead:
+      "Put it right, then mark the work complete again. The Client then has a new seven days to answer.",
+    cancelledTitle: "Cancelled",
+    cancelledLead: (of: {
+      who: string;
+      afterWorkStarted: boolean;
+      asClient: boolean;
+      labourRefund: { amount: string; on: string } | null;
+    }) => {
+      if (!of.afterWorkStarted) {
+        return of.asClient
+          ? `${of.who} cancelled before Work started. What was not yet released is refunded to you; the Protection Fee is kept.`
+          : `${of.who} cancelled before Work started, and the Client is refunded what was not yet released.`;
+      }
+      const materials = of.asClient
+        ? "The Materials stay with the Artisan"
+        : "The Materials stay with you";
+      if (of.labourRefund) {
+        return of.asClient
+          ? `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released, ${of.labourRefund.amount}, is refunded to you on ${of.labourRefund.on}.`
+          : `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released, ${of.labourRefund.amount}, is refunded to the Client on ${of.labourRefund.on}. You may refund it sooner under Payments.`;
+      }
+      return `${of.who} cancelled after Work started. ${materials}, and the Labour not yet released was refunded ${of.asClient ? "to you" : "to the Client"}.`;
+    },
+    you: "You",
+    theClient: "The Client",
+    theArtisan: "The Artisan",
+    cancelJob: "Cancel this Job",
+    cancelLead: (of: { afterWorkStarted: boolean; asClient: boolean; amount: string }) =>
+      of.afterWorkStarted
+        ? of.asClient
+          ? `Cancelling now: the Materials stay with the Artisan, and the Labour not yet released, ${of.amount}, is refunded to you 72 hours later.`
+          : `Cancelling now: the Materials stay with you, and the Labour not yet released, ${of.amount}, is refunded to the Client 72 hours later, unless you refund it sooner.`
+        : of.asClient
+          ? `Cancelling now refunds ${of.amount} to you at once. The Protection Fee is kept.`
+          : `Cancelling now refunds ${of.amount} to the Client at once.`,
+    cancelReason: "Reason (optional)",
+    cancelReasonHint: (asClient: boolean) =>
+      `Only the ArtisanConnect Admin reads it; the ${asClient ? "Artisan" : "Client"} does not see it.`,
+    cancelConfirm: (lead: string) => `Cancel this Job? ${lead} This cannot be undone.`,
+    keepJob: "Keep the Job",
+    completedTitle: "Completed",
+    completedClientLead: "The work is approved, and the Labour was released to the Artisan.",
+    completedArtisanLead:
+      "The work is approved, and the Labour was released to you, less the Artisan Fee.",
+    markComplete: "Mark the work complete",
+    completionNote: "What was done",
+    completionNoteHint: "The Client reads this with the photos before approving.",
+    afterPhotos: "Photos of the finished work",
+    afterPhotosHint: (max: number) => `1 to ${max} photos.`,
+    certificate: (name: string) => name.charAt(0).toUpperCase() + name.slice(1),
+    certificateHint: (name: string, neededOn: string) =>
+      `The law requires a ${name} on ${neededOn}. A PDF or a photo of it, showing your registration number.`,
+    documents: "Other documents (optional)",
+    documentsHint: (max: number) =>
+      `PDFs or photos, such as a guarantee or a data sheet. Up to ${max} documents in all.`,
+    markCompleteConfirm:
+      "Mark the work complete? The Client then has seven days to approve it or ask for a fix.",
+    completionBeingChecked: "Your Completion is being checked",
+    completionBeingCheckedLead:
+      "Only you see it until the Admin has checked it. The Client is told once it is released, and their seven days start then.",
+    withdrawCompletion: "Withdraw",
+    completionRefused: (reason: string) => `The Admin refused your Completion: ${reason}`,
+    approve: "Approve",
+    approveConfirm: (labour: string | null) =>
+      labour
+        ? `Approve the work? This releases the Labour, ${labour}, to the Artisan, and cannot be undone.`
+        : "Approve the work? This cannot be undone.",
+    askFix: "Ask for a fix",
+    fixNote: "What needs fixing",
+    sendFix: "Send Fix request",
+    cancel: "Cancel",
+    fixRequestNote: "The Client's note",
+    fixNoteBeingChecked:
+      "The note is being checked. Only you see it until the Admin has checked it.",
+    fixNoteHiddenArtisan: "The Client's note is being checked, and shows here once it is.",
+    fixNoteRefusedClient: (reason: string) =>
+      `The Admin refused your note, so the Artisan does not see it: ${reason}`,
+    fixNoteRefusedArtisan:
+      "The Client's note was not passed on. Ask them in Messages what needs fixing.",
+    completion: "Completion",
+    completionMade: (at: string) => `Marked complete ${at}`,
+    photo: (index: number) => `Photo ${index}`,
+    document: (index: number) => `Document ${index}`,
+    certificateDocument: "Certificate",
+    approvalBar: (by: string) => `Approved by silence on ${by}`,
+    payments: "Payments",
+    parts: {
+      materials: { title: "Materials", released: "Released at Work started" },
+      labour: { title: "Labour", released: "Released at Approval" },
+    },
+    partStates: { unreleased: "Paid in", released: "Released", refunded: "Refunded" },
+    activity: "Activity",
+    events: {
+      "quote.sent": "Quote sent",
+      hired: "Hired and paid",
+      "work.started": "Work started",
+      "completion.made": "Marked complete",
+      "fix.requested": "Fix requested",
+      approved: "Approved",
+      cancelled: "Cancelled",
+      refunded: "Refunded",
+    },
+    refunds: "Refunds",
+    refundStates: {
+      "on-its-way": "On its way",
+      paid: "Refunded",
+      owed: "Owed, paid by hand",
+    },
+    refundLine: (materials: string | null, labour: string | null) =>
+      [materials && `Materials ${materials}`, labour && `Labour ${labour}`]
+        .filter(Boolean)
+        .join(", "),
+    refundOwedLead:
+      "The bank could not take a Refund, so it is still owed to the Client. ArtisanConnect pays it by bank transfer.",
+    refund: "Refund",
+    refundLead:
+      "Refund any money not yet released, at any time: the Client's agreement is not needed. The Protection Fee is never refunded, and refunded money has no Artisan Fee taken.",
+    refundUpTo: (part: string, amount: string) => `${part}, up to ${amount}`,
+    refundSend: "Refund",
+    refundConfirm: (amount: string) => `Refund ${amount} to the Client? This cannot be undone.`,
+    cancelRefund: "Cancel",
+    artisan: "Artisan",
+    money: "Money",
+    paidIn: "Paid in",
+    released: "Released",
+    unreleased: "Not yet released",
+    refunded: "Refunded",
+    protectionFee: "Protection Fee (not refunded)",
+    artisanFee: "Artisan Fee",
+    artisanFeeShown: (percent: number) => `${percent}% of each Release`,
+    hiredQuote: "Hired Quote",
+    address: "Address",
+  },
+  fakeCheckout: {
+    title: "Fake checkout",
+    lead: "Launch money is fake: no money moves. Pay or fail this Payment as the provider's checkout would.",
+    amount: "Amount",
+    pay: "Pay",
+    fail: "Fail the payment",
+    closed: "This checkout is closed.",
+    back: "Back to ArtisanConnect",
   },
   conversation: {
     tabs: {
@@ -524,19 +797,40 @@ export const copy = {
     empty: "No messages yet.",
     adminMayRead:
       "The Admin may read this Conversation, for a Report, a Dispute, or a Chargeback. Before Payment, share no contact details, links, address, or surname, and pay only through ArtisanConnect.",
+    adminMayReadAfterPayment:
+      "The Admin may read this Conversation, for a Report, a Dispute, or a Chargeback. Now that the Job is paid, you may share phone numbers, emails, and the address. Share no bank details or payment links, and pay only through ArtisanConnect.",
     placeholder: "Write a message",
     photos: "Add photos",
     photosHint: (max: number) =>
       `Up to ${max} photos. No video, voice notes, or PDFs before Payment.`,
     photosChosen: (count: number) => (count === 1 ? "1 photo" : `${count} photos`),
     clearPhotos: "Remove photos",
+    attach: "Attach",
+    filesHint: (max: number) =>
+      `Up to ${max} photos, PDFs, or voice notes of up to 5 minutes, each at most 10 MB. No video.`,
+    filesChosen: (count: number) => (count === 1 ? "1 file" : `${count} files`),
+    clearFiles: "Remove files",
+    record: "Record a voice note",
+    stopRecording: (seconds: number) => `Stop recording (${formatSeconds(seconds)})`,
+    cannotRecord: "Your browser did not let ArtisanConnect use the microphone.",
+    voiceNote: (seconds: number) => `Voice note, ${formatSeconds(seconds)}`,
+    pdf: (index: number) => `PDF ${index}`,
     send: "Send",
     beingChecked: "Being checked",
     beingCheckedLead: "Only you see this until the Admin has checked it.",
     withdraw: "Withdraw",
     refused: (reason: string) => `Refused by the Admin: ${reason}`,
     readOnly: "This Conversation has ended. It stays here to read.",
-    events: { "quote.sent": "Quote sent" } satisfies Record<MessageEvent, string>,
+    events: {
+      "quote.sent": "Quote sent",
+      hire: "Hired and paid",
+      "work.started": "Work started",
+      "completion.made": "Marked complete",
+      "fix.requested": "Fix requested",
+      approved: "Approved",
+      refund: "Refunded",
+      cancelled: "Cancelled",
+    } satisfies Record<MessageEvent, string>,
     photo: (index: number) => `Photo ${index}`,
     message: "Message",
   },
@@ -650,6 +944,9 @@ export const copy = {
     home: {
       title: "Queues",
       lead: "Every queue in one stream, oldest first.",
+      floatShort: "The float cannot cover the Payouts and Refunds sent",
+      floatShortLead: (float: string, needed: string, when: string) =>
+        `The float holds ${float}, and the Payouts sent and not yet paid and the Refunds on their way need ${needed} (checked before the run, ${when}). The provider pauses what it cannot pay until the float is topped up.`,
       all: "All",
       empty: "Nothing is waiting. Every queue is clear.",
       emptyQueue: "Nothing is waiting in this queue.",
@@ -699,10 +996,32 @@ export const copy = {
         `${email} stops being an Admin and is signed out at once. This is written to the audit log.`,
       last: "The last Admin cannot be removed.",
     },
+    payouts: {
+      title: "Payouts",
+      lead: "Each Artisan still owed money, and each whose Payouts are held. A held Artisan's Payouts wait; lifting the hold sends them in the next daily run. Each is written to the audit log and told to the Artisan.",
+      empty: "No Artisan is owed money, and none is held.",
+      unpaid: "Unpaid",
+      held: "Held",
+      hold: "Hold Payouts",
+      lift: "Lift the hold",
+      history: "Money history",
+    },
+    history: {
+      lead: "Each Release owed to this Artisan, newest first, with every Payout of it. A Payout the bank refused or sent back leaves the Release owed again; the next goes to a new Payout account once you accept one in Verification.",
+      empty: "No Releases yet.",
+      paid: "Paid",
+      noPayout: "No Payout yet.",
+      payout: (reference: string) => `Payout ${reference}`,
+      sentOn: (when: string) => `sent ${when}`,
+      paidOn: (when: string) => `paid ${when}`,
+      stoppedOn: (state: string, when: string) => `${state.toLowerCase()} ${when}`,
+      reason: (reason: string) => `Bank's reason: ${reason}`,
+    },
     audit: {
       title: "Audit log",
-      lead: "Every Admin decision and every logged read: who, what, and when. Newest first. Nothing in it can be changed.",
+      lead: "Every Admin decision and every logged read: who, what, and when, with what the system logs for you, such as a Payout the bank sent back. Newest first. Nothing in it can be changed.",
       empty: "Nothing has been logged yet.",
+      system: "ArtisanConnect",
       older: "Older",
     },
   },
@@ -712,10 +1031,12 @@ export const copy = {
 } as const;
 
 /** A date as South Africans read it. */
+/** A length of time as minutes and seconds: "4:05". */
+export function formatSeconds(seconds: number): string {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+}
+
 export function formatDate(date: Date | string): string {
-  return new Date(date).toLocaleString("en-ZA", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Africa/Johannesburg",
-  });
+  return formatTime(new Date(date));
 }

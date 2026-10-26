@@ -14,7 +14,7 @@ import {
   SERVICE_CATEGORY_NAMES,
   type ServiceCategory,
 } from "../service-categories";
-import { checkFileCount, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
+import { checkFileCount, discardFiles, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
 import { badgesOf, verifiedCategoriesOf } from "../verification";
 import { slotOf } from "../verification/checks";
 import {
@@ -80,11 +80,11 @@ export const profilesSection = defineSection({
         publicProfile(ctx, viewer.accountId),
       ]);
       return {
-        shown: versionView(shown),
+        shown: versionView(viewer.accountId, shown),
         profile,
-        beingChecked: standing.beingChecked && versionView(standing.beingChecked),
+        beingChecked: standing.beingChecked && versionView(viewer.accountId, standing.beingChecked),
         refused: standing.refused && {
-          ...versionView(standing.refused),
+          ...versionView(viewer.accountId, standing.refused),
           reason: standing.refused.reason,
         },
       };
@@ -124,7 +124,7 @@ export const profilesSection = defineSection({
       if (unchanged) return refuse("unchanged", "Nothing has changed.");
 
       const added: ProfilePhoto[] = [];
-      const discard = () => discardPhotos(ctx, added);
+      const discard = () => discardFiles(ctx, added);
       try {
         for (const file of input.add) {
           const uploaded = await uploadFile(ctx, file, UPLOAD_CONTEXTS.beforePayment);
@@ -169,18 +169,15 @@ export const profilesSection = defineSection({
      * on a Profile anyone may open, and before that, or after an edit removes
      * it, only to its Artisan and the Admin.
      */
-    async photo(viewer: Actor, input: { photoId: string; thumbnail?: boolean }) {
-      const found = await photoById(ctx, input.photoId);
-      if (!found) return null;
+    async photo(viewer: Actor, input: { artisanId: string; photoId: string; thumbnail?: boolean }) {
+      const photo = await photoById(ctx, input.artisanId, input.photoId);
+      if (!photo) return null;
       const shown =
-        (await shownVersion(ctx, found.artisanId)).photos.some(
-          (photo) => photo.id === found.photo.id,
-        ) && (await openableArtisan(ctx, found.artisanId)) !== null;
-      const maySee = shown || viewer.kind === "admin" || accountIdOf(viewer) === found.artisanId;
+        (await shownVersion(ctx, input.artisanId)).photos.some((each) => each.id === photo.id) &&
+        (await openableArtisan(ctx, input.artisanId)) !== null;
+      const maySee = shown || viewer.kind === "admin" || accountIdOf(viewer) === input.artisanId;
       if (!maySee) return null;
-      const object = await ctx.ports.files.get(
-        input.thumbnail ? found.photo.thumbnailKey : found.photo.key,
-      );
+      const object = await ctx.ports.files.get(input.thumbnail ? photo.thumbnailKey : photo.key);
       if (!object) return null;
       return {
         body: object.body,
@@ -210,7 +207,7 @@ export const profilesSection = defineSection({
       }
       // The photos it added are nobody's now; those it kept are still shown.
       const shown = new Set((await shownVersion(ctx, actor.accountId)).photos.map((p) => p.id));
-      await discardPhotos(
+      await discardFiles(
         ctx,
         beingChecked.photos.filter((photo) => !shown.has(photo.id)),
       );
@@ -228,21 +225,16 @@ function beingChecked() {
   );
 }
 
-async function discardPhotos(ctx: Context, photos: ProfilePhoto[]) {
-  const keys = photos.flatMap((photo) => [photo.key, photo.thumbnailKey]);
-  if (keys.length > 0) await ctx.ports.files.delete(keys).catch(() => {});
-}
-
-/** A version as a viewer sees it: each photo by the path that serves it. */
-function versionView(version: ProfileVersion) {
+/** A version of the Artisan's Profile as a viewer sees it: each photo by the path that serves it. */
+function versionView(artisanId: string, version: ProfileVersion) {
   return {
     about: version.about,
     photos: version.photos.map((photo) => ({
       id: photo.id,
       width: photo.width,
       height: photo.height,
-      href: photoPath(photo),
-      thumbnailHref: photoPath(photo, true),
+      href: photoPath(artisanId, photo),
+      thumbnailHref: photoPath(artisanId, photo, true),
     })),
   };
 }
@@ -319,7 +311,7 @@ async function publicProfile(ctx: Context, artisanId: string) {
   return {
     artisanId: row.id,
     publicName: publicName(row),
-    ...versionView(shown),
+    ...versionView(row.id, shown),
     categories: row.categories.map(({ category, gasWork }) => ({
       category,
       name: SERVICE_CATEGORY_NAMES[category],

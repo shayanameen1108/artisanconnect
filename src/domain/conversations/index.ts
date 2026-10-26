@@ -1,18 +1,26 @@
-import { and, asc, eq, getTableColumns, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { accountIdOf, type Actor } from "../actor";
 import { checkContent } from "../content/check";
 import { alreadyChecked, isAlreadyDecided } from "../content/held";
+import type { Withheld } from "../content/patterns";
 import type { Context } from "../context";
 import { insertWhile } from "../guarded";
-import { discardPhotos, jobRow, type JobPhoto } from "../jobs/rows";
+import { jobRow } from "../jobs/rows";
+import type { ContentContext } from "../ports";
 import { ok, refuse } from "../result";
-import { conversations, messages } from "../schema";
+import { conversations, messages, type MessageFile } from "../schema";
 import { defineSection } from "../section";
 import { emailTells } from "../tells";
-import { checkFileCount, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
+import {
+  checkFileCount,
+  discardFiles,
+  uploadFile,
+  UPLOAD_CONTEXTS,
+  type StoredFile,
+} from "../uploads";
 import { MESSAGE_MAX } from "./inputs";
 import { heldMessage, holdWrites, refusalsOf, withdrawHeldMessage } from "./held";
-import { messagePhotoPath, namesOf, viewerOf, withheldOf } from "./parties";
+import { messageFilePath, namesOf, viewerOf, withheldOf } from "./parties";
 import {
   conversationRow,
   messageRow,
@@ -21,14 +29,16 @@ import {
   type Party,
   takesMessages,
   takesMessagesNow,
+  type ConversationRow,
   type MessageRow,
 } from "./rows";
 
 // Conversations (#125, ADR 0010): each Client and Artisan on a Job talk in
 // one, opened by the first Quote Sent or the Invitation. The Admin may read it
-// and never writes in it. Before Payment it takes text and photos, and every
-// message is read by the Content check before the other party sees it (ADR
-// 0011). Nothing delivered is ever changed or removed.
+// and never writes in it. Before Payment it takes text and photos; once Hired,
+// the Engagement's also takes voice notes and PDFs, and contact details (#131).
+// Every message is read by the Content check before the other party sees it
+// (ADR 0011). Nothing delivered is ever changed or removed.
 
 /** The states of a message only its sender sees: being checked, or refused with the reason. */
 const SENDER_ONLY = ["held", "refused"] as const;
@@ -113,6 +123,8 @@ export const conversationsSection = defineSection({
         jobId: conversation.jobId,
         with: party === "client" ? { name: names.artisan } : { name: names.client },
         takesMessages: await takesMessagesNow(ctx, conversation.id),
+        /** Whether it is the Engagement's, which takes voice notes, PDFs, and contact details. */
+        afterPayment: conversation.engagementId !== null,
         /** Whether the viewer has sent nothing here yet, so is told first that the Admin may read it. */
         firstMessage: !(await hasSent(ctx, conversation.id, accountId)),
         items: rows.map((row) => itemView(row, accountId, reasons)),
@@ -120,20 +132,22 @@ export const conversationsSection = defineSection({
     },
 
     /**
-     * Sends a message in the Conversation: text, photos, or both. The Content
-     * check reads it first, before Payment: a sure hit is refused with the
-     * reason and nothing is kept; an unsure one is Held for the Admin, and
-     * is "being checked" to its sender only. The other party is told of the
-     * first message they have not read.
+     * Sends a message in the Conversation: text, files, or both. Before
+     * Payment the files are photos; in the Engagement's, also voice notes and
+     * PDFs. The Content check reads it first, as before Payment or as the
+     * Engagement's: a sure hit is refused with the reason and nothing is
+     * kept; an unsure one is Held for the Admin, and is "being checked" to
+     * its sender only. The other party is told of the first message they
+     * have not read.
      */
-    async send(actor: Actor, input: { conversationId: string; text: string; photos?: Blob[] }) {
+    async send(actor: Actor, input: { conversationId: string; text: string; files?: Blob[] }) {
       const conversation = await conversationRow(ctx, input.conversationId);
       const accountId = accountIdOf(actor);
       if (!conversation || !accountId || !(await viewerOf(ctx, conversation, accountId))) {
         return refuse("not-found", "That Conversation does not exist.");
       }
       const text = input.text.trim();
-      const add = input.photos ?? [];
+      const add = input.files ?? [];
       if (!text && add.length === 0) return refuse("invalid", "Write a message or add a photo.");
       if (text.length > MESSAGE_MAX) {
         return refuse("invalid", `A message is at most ${MESSAGE_MAX} characters.`);
@@ -142,9 +156,10 @@ export const conversationsSection = defineSection({
       if (!counted.ok) return counted;
       if (!(await takesMessagesNow(ctx, conversation.id))) return readOnly();
 
-      const uploaded = await takePhotos(ctx, add);
+      const afterPayment = conversation.engagementId !== null;
+      const uploaded = await takeFiles(ctx, add, afterPayment);
       if (!uploaded.ok) return uploaded;
-      const photos = uploaded.value;
+      const stored = uploaded.value;
       const now = ctx.now();
       const message: MessageRow = {
         id: ctx.newId(),
@@ -152,26 +167,35 @@ export const conversationsSection = defineSection({
         senderId: accountId,
         event: null,
         text,
-        photos,
+        photos: stored.filter((file) => file.kind === "photo"),
+        files: stored.filter((file): file is MessageFile => file.kind !== "photo"),
         state: "held",
         heldFor: null,
+        heldFilesText: null,
         sentAt: now,
         deliveredAt: null,
       };
       try {
         const checked = await checkContent(ctx, {
           text,
-          files: photos,
-          context: { kind: "before-payment" },
-          withheld: await withheldOf(ctx, conversation),
+          files: stored,
+          ...(await checkedAs(ctx, conversation)),
         });
         if (!checked.ok) {
-          await discardPhotos(ctx, photos);
+          await discardFiles(ctx, stored);
           return checked;
         }
         if (checked.value.verdict === "held") {
           await ctx.commit(
-            holdWrites(ctx, { ...message, heldFor: checked.value.reason }, conversation.job.title),
+            holdWrites(
+              ctx,
+              {
+                ...message,
+                heldFor: checked.value.reason,
+                heldFilesText: checked.value.filesText || null,
+              },
+              conversation.job.title,
+            ),
           );
           return ok({ messageId: message.id, state: "held" as const });
         }
@@ -186,11 +210,11 @@ export const conversationsSection = defineSection({
           ...newMessageTell(ctx, actor, conversation, { id: message.id, senderId: accountId }),
         ]);
         if (delivered.length === 0) {
-          await discardPhotos(ctx, photos);
+          await discardFiles(ctx, stored);
           return readOnly();
         }
       } catch (error) {
-        await discardPhotos(ctx, photos);
+        await discardFiles(ctx, stored);
         throw error;
       }
       // The message stands whatever happens to an email; the clocks retry one that did not go.
@@ -225,19 +249,20 @@ export const conversationsSection = defineSection({
         if (isAlreadyDecided(error)) return alreadyChecked();
         throw error;
       }
-      await discardPhotos(ctx, message.photos);
+      await discardFiles(ctx, [...message.photos, ...message.files]);
       return ok({});
     },
 
     /**
-     * A photo in a message, or its thumbnail: to a party who sees the
+     * A file in a message, or a photo's thumbnail: to a party who sees the
      * message, and to the Admin for a message that was Held, which they read
      * to decide it. Null for anyone else.
      */
-    async photo(viewer: Actor, input: { photoId: string; thumbnail?: boolean }) {
-      const found = await photoById(ctx, input.photoId);
-      if (!found) return null;
-      const { message, photo } = found;
+    async file(viewer: Actor, input: { messageId: string; fileId: string; thumbnail?: boolean }) {
+      const message = await messageRow(ctx, input.messageId);
+      const file =
+        message && [...message.photos, ...message.files].find((each) => each.id === input.fileId);
+      if (!message || !file) return null;
       if (viewer.kind === "admin") {
         if (message.heldFor === null) return null;
       } else {
@@ -250,11 +275,12 @@ export const conversationsSection = defineSection({
           (mine && (SENDER_ONLY as readonly string[]).includes(message.state));
         if (!sees) return null;
       }
-      const object = await ctx.ports.files.get(input.thumbnail ? photo.thumbnailKey : photo.key);
+      const key = input.thumbnail && file.kind === "photo" ? file.thumbnailKey : file.key;
+      const object = await ctx.ports.files.get(key);
       if (!object) return null;
       return {
         body: object.body,
-        contentType: object.httpMetadata?.contentType ?? "image/webp",
+        contentType: object.httpMetadata?.contentType ?? "application/octet-stream",
         size: object.size,
       };
     },
@@ -264,7 +290,14 @@ export const conversationsSection = defineSection({
 /** A message, or an event's row, as the viewer sees it. */
 function itemView(row: MessageRow, viewerId: string, reasons: Map<string, string>) {
   const at = row.deliveredAt ?? row.sentAt;
-  if (row.event !== null) return { kind: "event" as const, event: row.event, at };
+  if (row.event !== null) {
+    return {
+      kind: "event" as const,
+      event: row.event,
+      at,
+      ...(row.text ? { text: row.text } : {}),
+    };
+  }
   return {
     kind: "message" as const,
     messageId: row.id,
@@ -274,9 +307,19 @@ function itemView(row: MessageRow, viewerId: string, reasons: Map<string, string
       id: photo.id,
       width: photo.width,
       height: photo.height,
-      href: messagePhotoPath(photo),
-      thumbnailHref: messagePhotoPath(photo, true),
+      href: messageFilePath(row.id, photo),
+      thumbnailHref: messageFilePath(row.id, photo, true),
     })),
+    files: row.files.map((file) =>
+      file.kind === "voice-note"
+        ? {
+            id: file.id,
+            kind: file.kind,
+            seconds: file.seconds,
+            href: messageFilePath(row.id, file),
+          }
+        : { id: file.id, kind: file.kind, href: messageFilePath(row.id, file) },
+    ),
     // Only these are selected: one withdrawn or unsent is nobody's to see.
     state: row.state as "delivered" | (typeof SENDER_ONLY)[number],
     at,
@@ -311,35 +354,44 @@ async function hasSent(ctx: Context, conversationId: string, accountId: string) 
   return !!row;
 }
 
-/** Uploads a message's photos. Nothing is stored if any is refused. */
-async function takePhotos(ctx: Context, add: Blob[]) {
-  const added: JobPhoto[] = [];
+/**
+ * How the Content check reads a message in the Conversation: as the
+ * Engagement's, where contact may be swapped, or as before Payment, when
+ * neither the Job's address nor an unshown surname may be said either.
+ */
+async function checkedAs(
+  ctx: Context,
+  conversation: ConversationRow,
+): Promise<{ context: ContentContext; withheld?: Withheld }> {
+  if (conversation.engagementId !== null) {
+    return {
+      context: { kind: "engagement-conversation", engagementId: conversation.engagementId },
+    };
+  }
+  return { context: { kind: "before-payment" }, withheld: await withheldOf(ctx, conversation) };
+}
+
+/**
+ * Uploads a message's files: photos, and in the Engagement's Conversation
+ * voice notes and PDFs too. Nothing is stored if any is refused.
+ */
+async function takeFiles(ctx: Context, add: Blob[], afterPayment: boolean) {
+  const where = afterPayment ? UPLOAD_CONTEXTS.afterPayment : UPLOAD_CONTEXTS.beforePayment;
+  const added: StoredFile[] = [];
   try {
     for (const file of add) {
-      const uploaded = await uploadFile(ctx, file, UPLOAD_CONTEXTS.beforePayment);
+      const uploaded = await uploadFile(ctx, file, where);
       if (!uploaded.ok) {
-        await discardPhotos(ctx, added);
+        await discardFiles(ctx, added);
         return uploaded;
       }
-      if (uploaded.value.kind === "photo") added.push(uploaded.value);
+      added.push(uploaded.value);
     }
   } catch (error) {
-    await discardPhotos(ctx, added);
+    await discardFiles(ctx, added);
     throw error;
   }
   return ok(added);
-}
-
-/** The message holding the photo, and the photo; null if none does. */
-async function photoById(ctx: Context, photoId: string) {
-  const [row] = await ctx.db
-    .select(getTableColumns(messages))
-    .from(messages)
-    .where(
-      sql`exists (select 1 from json_each(${messages.photos}) where json_extract(value, '$.id') = ${photoId})`,
-    );
-  const photo = row?.photos.find((each) => each.id === photoId);
-  return row && photo ? { message: row, photo } : null;
 }
 
 function readOnly() {

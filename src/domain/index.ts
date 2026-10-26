@@ -9,9 +9,14 @@ import { adminsSection, setUpFirstAdmin } from "./admins";
 import { marketplaceRulesSection } from "./accounts/rules";
 import { createContext } from "./context";
 import { conversationsSection } from "./conversations";
+import { engagementsSection } from "./engagements";
 import { invitationsSection } from "./invitations";
 import { jobsSection } from "./jobs";
 import { matchesSection } from "./matches";
+import { receivePaymentEvent } from "./payments";
+import { payoutsSection } from "./payouts";
+import { runPayouts } from "./payouts/run";
+import { sendWaitingRefunds } from "./refunds";
 import { createQueues, type QueueItemKind } from "./queues";
 import { profilesSection } from "./profiles";
 import { quotesSection } from "./quotes";
@@ -20,7 +25,7 @@ import { availabilitySection } from "./regions/availability";
 import { supportSection } from "./support";
 import { emailTells, noticesSection } from "./tells";
 import { verificationSection } from "./verification";
-import { PORT_NAMES, type DomainConfig, type Ports } from "./ports";
+import { PORT_NAMES, type DomainConfig, type Ports, type Webhook } from "./ports";
 
 /** Every section of the module. Each ticket adds its section here. */
 export const sections = [
@@ -28,11 +33,13 @@ export const sections = [
   adminsSection,
   availabilitySection,
   conversationsSection,
+  engagementsSection,
   invitationsSection,
   jobsSection,
   marketplaceRulesSection,
   matchesSection,
   noticesSection,
+  payoutsSection,
   profilesSection,
   quotesSection,
   regionsSection,
@@ -79,17 +86,38 @@ export function assembleDomain<const Sections extends readonly Section[]>(
     queues: createQueues(ctx, queueItemKinds),
     /** Entry points the platform calls, not a party. */
     system: {
-      /** Called by the every-minute cron. Also sends any Tell's email that has not gone. */
+      /**
+       * Called by the every-minute cron. Also sends any Refund a command
+       * could not send, and any Tell's email that has not gone.
+       */
       async runDueClocks() {
         try {
           return await runDueClocks(ctx, clocks);
         } finally {
+          await sendWaitingRefunds(ctx).catch((error: unknown) => {
+            console.error("Refunds were not sent", error);
+          });
           // Never in place of a clock's failure.
           await emailTells(ctx).catch((error: unknown) => {
             console.error("Tell emails did not go", error);
           });
         }
       },
+      /**
+       * Also called by the every-minute cron: runs today's Payouts once their
+       * South African time of day has come, after the float check.
+       */
+      async runPayouts() {
+        try {
+          return await runPayouts(ctx);
+        } finally {
+          await emailTells(ctx).catch((error: unknown) => {
+            console.error("Tell emails did not go", error);
+          });
+        }
+      },
+      /** Called by the payment webhook route with the request as it came. */
+      receivePaymentEvent: (webhook: Webhook) => receivePaymentEvent(ctx, webhook),
       /** The deploy-time setup command: makes the first Admin. */
       setUpFirstAdmin: (input: { email: string }) => setUpFirstAdmin(ctx, input),
     },

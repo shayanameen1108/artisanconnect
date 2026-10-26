@@ -1,15 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requestActor, requestDomain } from "@/web/session";
 
-// A photo in a message, or its thumbnail with ?size=thumbnail. The domain module
-// serves it only to the parties who see the message, and to the Admin for a
-// Held one, so nothing caches it.
-export const Route = createFileRoute("/message-photos/$photoId")({
+// A Job photo, or its thumbnail with ?size=thumbnail. The domain module
+// serves it only to the Job's Client and the Admin, so nothing caches it.
+export const Route = createFileRoute("/job-photos/$jobId/$photoId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
         const domain = requestDomain();
-        const photo = await domain.conversations.photo(await requestActor(domain), {
+        const photo = await domain.jobs.photo(await requestActor(domain), {
+          jobId: params.jobId,
           photoId: params.photoId,
           thumbnail: new URL(request.url).searchParams.get("size") === "thumbnail",
         });

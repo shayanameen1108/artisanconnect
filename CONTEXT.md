@@ -103,11 +103,11 @@ The part of a Quote that pays for goods the Artisan supplies, released at Work s
 _Avoid_: Deposit, Parts, Supplies
 
 **Hire**:
-The Client's choice of a Sent Quote, made by paying for it. Other Sent Quotes on that Job become Declined.
+The Client's choice of a Sent Quote, made by paying for it. Other Sent Quotes on that Job become Declined. A Quote whose start date has passed is revised before it is Hired. If the Quote ends or is revised while the Client is paying, nobody is Hired and the Payment is refunded in full.
 _Avoid_: Accept, Booking
 
 **Conversation**:
-The messages between one Client and one Artisan on one Job, opened by the first Quote Sent or the Invitation. The Admin may read it and not write in it. Before Payment it takes text and photos; after Payment also voice notes and PDFs; never video. It goes read-only once the Quote is Declined, Withdrawn, or Expired, or the Job closes; a delivered message is never changed or removed.
+The messages between one Client and one Artisan on one Job, opened by the first Quote Sent or the Invitation. The Admin may read it and not write in it. Before Payment it takes text and photos; after Payment also voice notes and PDFs; never video. It goes read-only once the Quote is Declined, Withdrawn, or Expired, the Job closes, or its Engagement is Completed or Cancelled; a delivered message is never changed or removed.
 _Avoid_: Chat, Inbox, DM
 
 ### Doing the work
@@ -183,7 +183,7 @@ Money sent to the Artisan's Payout account after a Release, in the next daily ru
 _Avoid_: Withdrawal, Settlement
 
 **Payout account**:
-The bank account in the Artisan's own name, proven by a bank letter, that Payouts are sent to. No two Artisans may hold the same one. A bank refusing or sending back a Payout makes it no longer current, and Payouts wait until the Admin accepts a new one.
+The bank account in the Artisan's own name, proven by a bank letter, that Payouts are sent to. No two Artisans may hold the same one. A bank refusing or sending back a Payout makes it no longer current, and Payouts wait until the Admin accepts a new one; it still counts for Verification, so the Artisan may still Quote and be Hired.
 _Avoid_: Wallet, Bank details
 
 **Chargeback**:

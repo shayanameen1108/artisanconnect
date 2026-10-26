@@ -11,7 +11,7 @@ import { clientShownName, publicName } from "../accounts/names";
 import { accounts, jobs, suburbs, type JOB_STATES } from "../schema";
 import { defineSection } from "../section";
 import { SERVICE_CATEGORY_NAMES } from "../service-categories";
-import { checkFileCount, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
+import { checkFileCount, discardFiles, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
 import { heldInvitation } from "../invitations";
 import { heldMatch } from "../matches";
 import { closeJobWrites } from "../quotes/ends";
@@ -19,10 +19,12 @@ import { hasHadQuote, isLive, newestQuote, takesQuotesNow } from "../quotes/rows
 import { ownQuoteView } from "../quotes/views";
 import { sendDueBatch } from "../matches/batches";
 import { emailTells } from "../tells";
+import { engagementAsArtisan, engagementAsClient, notHiredPayments } from "../engagements/views";
 import { expiryClocks } from "./expiry";
 import { heldJob, holdWrites, refusalOf, stillDraft, withdrawHeldJob } from "./held";
 import {
   EDITABLE_STATES,
+  addedBy,
   editPhotoById,
   applyWrites,
   editsStanding,
@@ -33,7 +35,6 @@ import {
 } from "./edits";
 import { draftFields, editFields, type DraftFields, type EditFields } from "./inputs";
 import {
-  discardPhotos,
   jobPhotoById,
   jobRow,
   jobsOf,
@@ -103,7 +104,7 @@ export const jobsSection = defineSection({
             .where(and(eq(jobs.id, draft.id), stillDraft(draft)))
             .returning({ id: jobs.id });
           if (saved.length === 0) {
-            await discardPhotos(ctx, added);
+            await discardFiles(ctx, added);
             return changed();
           }
           jobId = draft.id;
@@ -118,10 +119,10 @@ export const jobsSection = defineSection({
           });
         }
       } catch (error) {
-        await discardPhotos(ctx, added);
+        await discardFiles(ctx, added);
         throw error;
       }
-      await discardPhotos(ctx, removed);
+      await discardFiles(ctx, removed);
       return ok({ jobId });
     },
 
@@ -209,7 +210,7 @@ export const jobsSection = defineSection({
           context: { kind: "before-payment" },
         });
         if (!checked.ok) {
-          await discardPhotos(ctx, added);
+          await discardFiles(ctx, added);
           return checked;
         }
         const verdict = checked.value;
@@ -221,19 +222,19 @@ export const jobsSection = defineSection({
           // A batch, not a commit, to read whether the guarded update landed.
           const [landed] = await ctx.db.batch(applyWrites(ctx, job, version));
           if (landed.length === 0) {
-            await discardPhotos(ctx, added);
+            await discardFiles(ctx, added);
             return changed();
           }
         }
       } catch (error) {
         // Nothing stored stays behind an edit that was not written.
-        await discardPhotos(ctx, added);
+        await discardFiles(ctx, added);
         if (causedBy(error, "UNIQUE constraint failed: job_edits.job_id")) {
           return editBeingChecked();
         }
         throw error;
       }
-      if (applied) await discardPhotos(ctx, removed);
+      if (applied) await discardFiles(ctx, removed);
       return ok({ edit: applied ? ("applied" as const) : ("being-checked" as const) });
     },
 
@@ -258,8 +259,7 @@ export const jobsSection = defineSection({
         if (isAlreadyDecided(error)) return alreadyChecked();
         throw error;
       }
-      if (beingChecked && job.state !== "held")
-        await discardPhotos(ctx, addedBy(beingChecked, job));
+      if (beingChecked && job.state !== "held") await discardFiles(ctx, addedBy(beingChecked, job));
       return ok({});
     },
 
@@ -288,7 +288,7 @@ export const jobsSection = defineSection({
         if (isAlreadyDecided(error)) return changed();
         throw error;
       }
-      if (beingChecked) await discardPhotos(ctx, addedBy(beingChecked, job));
+      if (beingChecked) await discardFiles(ctx, addedBy(beingChecked, job));
       await emailTells(ctx).catch((error: unknown) => {
         console.error("Tell emails did not go", error);
       });
@@ -325,7 +325,7 @@ export const jobsSection = defineSection({
         .where(and(eq(jobs.id, draft.id), eq(jobs.state, "draft")))
         .returning({ id: jobs.id });
       if (deleted.length === 0) return noDraft();
-      await discardPhotos(ctx, draft.photos);
+      await discardFiles(ctx, draft.photos);
       return ok({});
     },
 
@@ -354,19 +354,17 @@ export const jobsSection = defineSection({
      * too: to the Job's Client and the Admin. An Artisan who sees the Job
      * sees the photos it shows, never an edit's.
      */
-    async photo(viewer: Actor, input: { photoId: string; thumbnail?: boolean }) {
-      const onJob = await jobPhotoById(ctx, input.photoId);
-      const found = onJob ?? (await editPhotoById(ctx, input.photoId));
-      if (!found) return null;
+    async photo(viewer: Actor, input: { jobId: string; photoId: string; thumbnail?: boolean }) {
+      const onJob = await jobPhotoById(ctx, input.jobId, input.photoId);
+      const photo = onJob ?? (await editPhotoById(ctx, input.jobId, input.photoId));
+      if (!photo) return null;
       if (viewer.kind !== "admin") {
-        const job = await jobRow(ctx, found.jobId);
+        const job = await jobRow(ctx, input.jobId);
         const holding =
           !!onJob && !!job && viewer.kind === "artisan" && (await seesJob(ctx, job, viewer));
         if (!job || (job.clientId !== accountIdOf(viewer) && !holding)) return null;
       }
-      const object = await ctx.ports.files.get(
-        input.thumbnail ? found.photo.thumbnailKey : found.photo.key,
-      );
+      const object = await ctx.ports.files.get(input.thumbnail ? photo.thumbnailKey : photo.key);
       if (!object) return null;
       return {
         body: object.body,
@@ -379,11 +377,13 @@ export const jobsSection = defineSection({
     async view(viewer: Actor, input: { jobId: string }) {
       const job = await jobRow(ctx, input.jobId);
       if (!job || job.clientId !== accountIdOf(viewer)) return null;
-      const [refusal, edits, quoted, takesQuotes] = await Promise.all([
+      const [refusal, edits, quoted, takesQuotes, engagement, notHired] = await Promise.all([
         refusalOf(ctx, job),
         editsStanding(ctx, job.id),
         hasHadQuote(ctx, job.id),
         takesQuotesNow(ctx, job.id),
+        engagementAsClient(ctx, job),
+        notHiredPayments(ctx, job.id),
       ]);
       return {
         jobId: job.id,
@@ -395,7 +395,7 @@ export const jobsSection = defineSection({
         street: job.street,
         title: job.title,
         description: job.description,
-        photos: job.photos.map(photoView),
+        photos: job.photos.map((photo) => photoView(job.id, photo)),
         gasWork: job.gasWork,
         preferredStart: job.preferredStart,
         matching: job.matching,
@@ -409,12 +409,16 @@ export const jobsSection = defineSection({
         refused: refusal === null ? null : { reason: refusal },
         /** An edit being checked, which only the Client and the Admin see, or one refused. */
         edit: {
-          beingChecked: edits.beingChecked && versionView(edits.beingChecked),
+          beingChecked: edits.beingChecked && versionView(job.id, edits.beingChecked),
           refused: edits.refused && {
-            ...versionView(edits.refused),
+            ...versionView(job.id, edits.refused),
             reason: edits.refused.reason,
           },
         },
+        /** The Engagement, once a Quote is Hired. */
+        engagement,
+        /** Payments that arrived but Hired nobody, each refunded whole. */
+        notHired,
       };
     },
 
@@ -445,17 +449,25 @@ export const jobsSection = defineSection({
       // A Quote keeps the Job in view, whatever becomes of it or the Job, and
       // so does an Invitation not passed, for its Conversation.
       if (!held && !isLive(quote) && !invitation) return null;
+      const engagement = await engagementAsArtisan(ctx, job.id, viewer.accountId);
       return {
         jobId: job.id,
         state: job.state,
         category: job.category && { id: job.category, name: SERVICE_CATEGORY_NAMES[job.category] },
         siteType: job.siteType,
         region: job.regionId ? { id: job.regionId, name: job.regionName ?? "" } : null,
+        /** The suburb and street, withheld from every Artisan until Payment, then shown to the Hired one. */
+        address: engagement && {
+          suburb: job.suburbName ?? "",
+          street: job.street,
+        },
         title: job.title,
         description: job.description,
-        photos: job.photos.map(photoView),
+        photos: job.photos.map((photo) => photoView(job.id, photo)),
         gasWork: job.gasWork,
         preferredStart: job.preferredStart,
+        /** The Engagement, if the Artisan was Hired. */
+        engagement,
         /** When a Batch offered it the Artisan, if one did and they have not passed. */
         offeredAt: held?.offeredAt ?? null,
         /** When the Client invited the Artisan, if they did. */
@@ -544,12 +556,6 @@ function noDraft() {
   return refuse("not-found", "That Draft does not exist. Reload the page.");
 }
 
-/** The photos an edit added: once it is withdrawn they are nobody's; those it kept stay on the Job. */
-function addedBy(edit: { photos: JobPhoto[] }, job: { photos: JobPhoto[] }) {
-  const onJob = new Set(job.photos.map((photo) => photo.id));
-  return edit.photos.filter((photo) => !onJob.has(photo.id));
-}
-
 function changed() {
   return refuse(
     "changed",
@@ -632,13 +638,13 @@ async function takePhotos(ctx: Context, holding: JobPhoto[], input: PhotosInput)
     for (const file of add) {
       const uploaded = await uploadFile(ctx, file, UPLOAD_CONTEXTS.beforePayment);
       if (!uploaded.ok) {
-        await discardPhotos(ctx, added);
+        await discardFiles(ctx, added);
         return uploaded;
       }
       if (uploaded.value.kind === "photo") added.push(uploaded.value);
     }
   } catch (error) {
-    await discardPhotos(ctx, added);
+    await discardFiles(ctx, added);
     throw error;
   }
   return ok({

@@ -15,7 +15,15 @@ import {
 import type { Actor } from "../actor";
 import type { Context, Write } from "../context";
 import { liveQuoteOf } from "../quotes/rows";
-import { conversations, invitations, jobs, messages, quotes, suburbs } from "../schema";
+import {
+  conversations,
+  engagements,
+  invitations,
+  jobs,
+  messages,
+  quotes,
+  suburbs,
+} from "../schema";
 import { tellWhile } from "../tells";
 import type { MessageEvent } from "./inputs";
 
@@ -25,7 +33,13 @@ import type { MessageEvent } from "./inputs";
 
 export type MessageRow = typeof messages.$inferSelect;
 
-/** A Conversation with what of its Job the module reads of it; null if there is none. */
+export type ConversationRow = NonNullable<Awaited<ReturnType<typeof conversationRow>>>;
+
+/**
+ * A Conversation with what of its Job the module reads of it, and the
+ * Engagement it is the Conversation of, if its Artisan was Hired; null if
+ * there is none.
+ */
 export async function conversationRow(ctx: Context, conversationId: string) {
   const [row] = await ctx.db
     .select({
@@ -37,12 +51,20 @@ export async function conversationRow(ctx: Context, conversationId: string) {
         street: jobs.street,
         suburbName: suburbs.name,
       },
+      engagementId: engagements.id,
     })
     .from(conversations)
     .innerJoin(jobs, eq(jobs.id, conversations.jobId))
     .leftJoin(suburbs, eq(suburbs.id, jobs.suburbId))
+    .leftJoin(
+      engagements,
+      and(
+        eq(engagements.jobId, conversations.jobId),
+        eq(engagements.artisanId, conversations.artisanId),
+      ),
+    )
     .where(eq(conversations.id, conversationId));
-  return row ? { ...row.conversation, job: row.job } : null;
+  return row ? { ...row.conversation, job: row.job, engagementId: row.engagementId } : null;
 }
 
 /** A message by its id; null if there is none. */
@@ -90,39 +112,53 @@ export function quoteSentWrites(
   ctx: Context,
   quote: { id: string; jobId: string; artisanId: string },
 ): Write[] {
-  const now = ctx.now();
   const sentNow = exists(
     ctx.db
       .select({ one: sql`1` })
       .from(quotes)
       .where(and(eq(quotes.id, quote.id), eq(quotes.state, "sent"))),
   );
-  return [
-    ...openWrites(ctx, quote, sentNow),
-    ctx.db.insert(messages).select(
-      ctx.db
-        .select({
-          id: sql<string>`${ctx.newId()}`.as("id"),
-          conversationId: conversations.id,
-          senderId: sql<null>`null`.as("sender_id"),
-          event: sql<MessageEvent>`'quote.sent'`.as("event"),
-          text: sql<string>`''`.as("text"),
-          photos: sql<string>`'[]'`.as("photos"),
-          state: sql<string>`'delivered'`.as("state"),
-          heldFor: sql<null>`null`.as("held_for"),
-          sentAt: sql<number>`${now.getTime()}`.as("sent_at"),
-          deliveredAt: sql<number>`${now.getTime()}`.as("delivered_at"),
-        })
-        .from(conversations)
-        .where(
-          and(
-            eq(conversations.jobId, quote.jobId),
-            eq(conversations.artisanId, quote.artisanId),
-            sentNow,
-          ),
+  return [...openWrites(ctx, quote, sentNow), eventWrite(ctx, quote, "quote.sent", sentNow)];
+}
+
+/**
+ * The write that shows an event in the Conversation of the Artisan on the
+ * Job, as a row that is not speech, only if the condition holds when it is
+ * written. Its text, if any, is what the event names, such as a Refund's amount.
+ */
+export function eventWrite(
+  ctx: Context,
+  on: { jobId: string; artisanId: string },
+  event: MessageEvent,
+  condition: SQL,
+  text = "",
+): Write {
+  const now = ctx.now();
+  return ctx.db.insert(messages).select(
+    ctx.db
+      .select({
+        id: sql<string>`${ctx.newId()}`.as("id"),
+        conversationId: conversations.id,
+        senderId: sql<null>`null`.as("sender_id"),
+        event: sql<MessageEvent>`${event}`.as("event"),
+        text: sql<string>`${text}`.as("text"),
+        photos: sql<string>`'[]'`.as("photos"),
+        files: sql<string>`'[]'`.as("files"),
+        state: sql<string>`'delivered'`.as("state"),
+        heldFor: sql<null>`null`.as("held_for"),
+        heldFilesText: sql<null>`null`.as("held_files_text"),
+        sentAt: sql<number>`${now.getTime()}`.as("sent_at"),
+        deliveredAt: sql<number>`${now.getTime()}`.as("delivered_at"),
+      })
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.jobId, on.jobId),
+          eq(conversations.artisanId, on.artisanId),
+          condition,
         ),
-    ),
-  ];
+      ),
+  );
 }
 
 /** The states of a Quote that ended before Hire, which ends its Conversation. */
@@ -145,11 +181,14 @@ function quoteOfConversation(
     );
 }
 
+/** The states of an Engagement that end its Conversation. */
+const ENDED_ENGAGEMENT_STATES = ["completed", "cancelled"] as const;
+
 /**
  * The SQL that is true while the Conversation takes messages: its Job is not
  * Closed, the Artisan's Quote did not end, and the Job is Open or the Quote is
  * still Sent (an Expired Job may still be Hired). Once Hired, only the Hired
- * Quote's goes on (#126).
+ * Quote's goes on (#126), until its Engagement is Completed or Cancelled (#131).
  */
 export function takesMessages(ctx: Context, conversationId: string) {
   return exists(
@@ -163,6 +202,18 @@ export function takesMessages(ctx: Context, conversationId: string) {
           ne(jobs.state, "closed"),
           notExists(quoteOfConversation(ctx, ENDED_QUOTE_STATES)),
           or(eq(jobs.state, "open"), exists(quoteOfConversation(ctx, ["sent", "hired"]))),
+          notExists(
+            ctx.db
+              .select({ one: sql`1` })
+              .from(engagements)
+              .where(
+                and(
+                  eq(engagements.jobId, conversations.jobId),
+                  eq(engagements.artisanId, conversations.artisanId),
+                  inArray(engagements.state, ENDED_ENGAGEMENT_STATES),
+                ),
+              ),
+          ),
         ),
       ),
   );

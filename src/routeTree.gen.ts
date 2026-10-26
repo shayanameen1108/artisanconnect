@@ -32,14 +32,19 @@ import { Route as AdminSignInRouteImport } from './routes/admin/sign-in'
 import { Route as ArtisansIndexRouteImport } from './routes/artisans.index'
 import { Route as ArtisansArtisanIdRouteImport } from './routes/artisans.$artisanId'
 import { Route as DevMailRouteImport } from './routes/dev/mail'
-import { Route as JobPhotosPhotoIdRouteImport } from './routes/job-photos.$photoId'
+import { Route as FakeCheckoutCollectionIdRouteImport } from './routes/fake-checkout.$collectionId'
 import { Route as JobsIndexRouteImport } from './routes/jobs.index'
 import { Route as JobsJobIdRouteImport } from './routes/jobs.$jobId'
 import { Route as JobsNewRouteImport } from './routes/jobs.new'
-import { Route as MessagePhotosPhotoIdRouteImport } from './routes/message-photos.$photoId'
-import { Route as ProfilePhotosPhotoIdRouteImport } from './routes/profile-photos.$photoId'
+import { Route as WebhooksPaymentsRouteImport } from './routes/webhooks/payments'
 import { Route as AdminFilesTokenRouteImport } from './routes/admin/files.$token'
 import { Route as AdminItemsItemIdRouteImport } from './routes/admin/items.$itemId'
+import { Route as AdminPayoutsIndexRouteImport } from './routes/admin/payouts.index'
+import { Route as AdminPayoutsArtisanIdRouteImport } from './routes/admin/payouts.$artisanId'
+import { Route as CompletionFilesCompletionIdFileIdRouteImport } from './routes/completion-files.$completionId.$fileId'
+import { Route as JobPhotosJobIdPhotoIdRouteImport } from './routes/job-photos.$jobId.$photoId'
+import { Route as MessageFilesMessageIdFileIdRouteImport } from './routes/message-files.$messageId.$fileId'
+import { Route as ProfilePhotosArtisanIdPhotoIdRouteImport } from './routes/profile-photos.$artisanId.$photoId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -156,11 +161,12 @@ const DevMailRoute = DevMailRouteImport.update({
   path: '/dev/mail',
   getParentRoute: () => rootRouteImport,
 } as any)
-const JobPhotosPhotoIdRoute = JobPhotosPhotoIdRouteImport.update({
-  id: '/job-photos/$photoId',
-  path: '/job-photos/$photoId',
-  getParentRoute: () => rootRouteImport,
-} as any)
+const FakeCheckoutCollectionIdRoute =
+  FakeCheckoutCollectionIdRouteImport.update({
+    id: '/fake-checkout/$collectionId',
+    path: '/fake-checkout/$collectionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const JobsIndexRoute = JobsIndexRouteImport.update({
   id: '/jobs/',
   path: '/jobs/',
@@ -176,14 +182,9 @@ const JobsNewRoute = JobsNewRouteImport.update({
   path: '/jobs/new',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MessagePhotosPhotoIdRoute = MessagePhotosPhotoIdRouteImport.update({
-  id: '/message-photos/$photoId',
-  path: '/message-photos/$photoId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProfilePhotosPhotoIdRoute = ProfilePhotosPhotoIdRouteImport.update({
-  id: '/profile-photos/$photoId',
-  path: '/profile-photos/$photoId',
+const WebhooksPaymentsRoute = WebhooksPaymentsRouteImport.update({
+  id: '/webhooks/payments',
+  path: '/webhooks/payments',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminFilesTokenRoute = AdminFilesTokenRouteImport.update({
@@ -196,6 +197,39 @@ const AdminItemsItemIdRoute = AdminItemsItemIdRouteImport.update({
   path: '/admin/items/$itemId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminPayoutsIndexRoute = AdminPayoutsIndexRouteImport.update({
+  id: '/admin/payouts/',
+  path: '/admin/payouts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminPayoutsArtisanIdRoute = AdminPayoutsArtisanIdRouteImport.update({
+  id: '/admin/payouts/$artisanId',
+  path: '/admin/payouts/$artisanId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompletionFilesCompletionIdFileIdRoute =
+  CompletionFilesCompletionIdFileIdRouteImport.update({
+    id: '/completion-files/$completionId/$fileId',
+    path: '/completion-files/$completionId/$fileId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const JobPhotosJobIdPhotoIdRoute = JobPhotosJobIdPhotoIdRouteImport.update({
+  id: '/job-photos/$jobId/$photoId',
+  path: '/job-photos/$jobId/$photoId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MessageFilesMessageIdFileIdRoute =
+  MessageFilesMessageIdFileIdRouteImport.update({
+    id: '/message-files/$messageId/$fileId',
+    path: '/message-files/$messageId/$fileId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const ProfilePhotosArtisanIdPhotoIdRoute =
+  ProfilePhotosArtisanIdPhotoIdRouteImport.update({
+    id: '/profile-photos/$artisanId/$photoId',
+    path: '/profile-photos/$artisanId/$photoId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -219,16 +253,21 @@ export interface FileRoutesByFullPath {
   '/admin/sign-in': typeof AdminSignInRoute
   '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
   '/dev/mail': typeof DevMailRoute
-  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/fake-checkout/$collectionId': typeof FakeCheckoutCollectionIdRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/new': typeof JobsNewRoute
-  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
-  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/webhooks/payments': typeof WebhooksPaymentsRoute
   '/admin/': typeof AdminIndexRoute
   '/artisans/': typeof ArtisansIndexRoute
   '/jobs/': typeof JobsIndexRoute
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
+  '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
+  '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
+  '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
+  '/admin/payouts/': typeof AdminPayoutsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -252,16 +291,21 @@ export interface FileRoutesByTo {
   '/admin/sign-in': typeof AdminSignInRoute
   '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
   '/dev/mail': typeof DevMailRoute
-  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/fake-checkout/$collectionId': typeof FakeCheckoutCollectionIdRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/new': typeof JobsNewRoute
-  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
-  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/webhooks/payments': typeof WebhooksPaymentsRoute
   '/admin': typeof AdminIndexRoute
   '/artisans': typeof ArtisansIndexRoute
   '/jobs': typeof JobsIndexRoute
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
+  '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
+  '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
+  '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
+  '/admin/payouts': typeof AdminPayoutsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -286,16 +330,21 @@ export interface FileRoutesById {
   '/admin/sign-in': typeof AdminSignInRoute
   '/artisans/$artisanId': typeof ArtisansArtisanIdRoute
   '/dev/mail': typeof DevMailRoute
-  '/job-photos/$photoId': typeof JobPhotosPhotoIdRoute
+  '/fake-checkout/$collectionId': typeof FakeCheckoutCollectionIdRoute
   '/jobs/$jobId': typeof JobsJobIdRoute
   '/jobs/new': typeof JobsNewRoute
-  '/message-photos/$photoId': typeof MessagePhotosPhotoIdRoute
-  '/profile-photos/$photoId': typeof ProfilePhotosPhotoIdRoute
+  '/webhooks/payments': typeof WebhooksPaymentsRoute
   '/admin/': typeof AdminIndexRoute
   '/artisans/': typeof ArtisansIndexRoute
   '/jobs/': typeof JobsIndexRoute
   '/admin/files/$token': typeof AdminFilesTokenRoute
   '/admin/items/$itemId': typeof AdminItemsItemIdRoute
+  '/admin/payouts/$artisanId': typeof AdminPayoutsArtisanIdRoute
+  '/completion-files/$completionId/$fileId': typeof CompletionFilesCompletionIdFileIdRoute
+  '/job-photos/$jobId/$photoId': typeof JobPhotosJobIdPhotoIdRoute
+  '/message-files/$messageId/$fileId': typeof MessageFilesMessageIdFileIdRoute
+  '/profile-photos/$artisanId/$photoId': typeof ProfilePhotosArtisanIdPhotoIdRoute
+  '/admin/payouts/': typeof AdminPayoutsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -321,16 +370,21 @@ export interface FileRouteTypes {
     | '/admin/sign-in'
     | '/artisans/$artisanId'
     | '/dev/mail'
-    | '/job-photos/$photoId'
+    | '/fake-checkout/$collectionId'
     | '/jobs/$jobId'
     | '/jobs/new'
-    | '/message-photos/$photoId'
-    | '/profile-photos/$photoId'
+    | '/webhooks/payments'
     | '/admin/'
     | '/artisans/'
     | '/jobs/'
     | '/admin/files/$token'
     | '/admin/items/$itemId'
+    | '/admin/payouts/$artisanId'
+    | '/completion-files/$completionId/$fileId'
+    | '/job-photos/$jobId/$photoId'
+    | '/message-files/$messageId/$fileId'
+    | '/profile-photos/$artisanId/$photoId'
+    | '/admin/payouts/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -354,16 +408,21 @@ export interface FileRouteTypes {
     | '/admin/sign-in'
     | '/artisans/$artisanId'
     | '/dev/mail'
-    | '/job-photos/$photoId'
+    | '/fake-checkout/$collectionId'
     | '/jobs/$jobId'
     | '/jobs/new'
-    | '/message-photos/$photoId'
-    | '/profile-photos/$photoId'
+    | '/webhooks/payments'
     | '/admin'
     | '/artisans'
     | '/jobs'
     | '/admin/files/$token'
     | '/admin/items/$itemId'
+    | '/admin/payouts/$artisanId'
+    | '/completion-files/$completionId/$fileId'
+    | '/job-photos/$jobId/$photoId'
+    | '/message-files/$messageId/$fileId'
+    | '/profile-photos/$artisanId/$photoId'
+    | '/admin/payouts'
   id:
     | '__root__'
     | '/'
@@ -387,16 +446,21 @@ export interface FileRouteTypes {
     | '/admin/sign-in'
     | '/artisans/$artisanId'
     | '/dev/mail'
-    | '/job-photos/$photoId'
+    | '/fake-checkout/$collectionId'
     | '/jobs/$jobId'
     | '/jobs/new'
-    | '/message-photos/$photoId'
-    | '/profile-photos/$photoId'
+    | '/webhooks/payments'
     | '/admin/'
     | '/artisans/'
     | '/jobs/'
     | '/admin/files/$token'
     | '/admin/items/$itemId'
+    | '/admin/payouts/$artisanId'
+    | '/completion-files/$completionId/$fileId'
+    | '/job-photos/$jobId/$photoId'
+    | '/message-files/$messageId/$fileId'
+    | '/profile-photos/$artisanId/$photoId'
+    | '/admin/payouts/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -421,16 +485,21 @@ export interface RootRouteChildren {
   AdminSignInRoute: typeof AdminSignInRoute
   ArtisansArtisanIdRoute: typeof ArtisansArtisanIdRoute
   DevMailRoute: typeof DevMailRoute
-  JobPhotosPhotoIdRoute: typeof JobPhotosPhotoIdRoute
+  FakeCheckoutCollectionIdRoute: typeof FakeCheckoutCollectionIdRoute
   JobsJobIdRoute: typeof JobsJobIdRoute
   JobsNewRoute: typeof JobsNewRoute
-  MessagePhotosPhotoIdRoute: typeof MessagePhotosPhotoIdRoute
-  ProfilePhotosPhotoIdRoute: typeof ProfilePhotosPhotoIdRoute
+  WebhooksPaymentsRoute: typeof WebhooksPaymentsRoute
   AdminIndexRoute: typeof AdminIndexRoute
   ArtisansIndexRoute: typeof ArtisansIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
   AdminFilesTokenRoute: typeof AdminFilesTokenRoute
   AdminItemsItemIdRoute: typeof AdminItemsItemIdRoute
+  AdminPayoutsArtisanIdRoute: typeof AdminPayoutsArtisanIdRoute
+  CompletionFilesCompletionIdFileIdRoute: typeof CompletionFilesCompletionIdFileIdRoute
+  JobPhotosJobIdPhotoIdRoute: typeof JobPhotosJobIdPhotoIdRoute
+  MessageFilesMessageIdFileIdRoute: typeof MessageFilesMessageIdFileIdRoute
+  ProfilePhotosArtisanIdPhotoIdRoute: typeof ProfilePhotosArtisanIdPhotoIdRoute
+  AdminPayoutsIndexRoute: typeof AdminPayoutsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -596,11 +665,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DevMailRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/job-photos/$photoId': {
-      id: '/job-photos/$photoId'
-      path: '/job-photos/$photoId'
-      fullPath: '/job-photos/$photoId'
-      preLoaderRoute: typeof JobPhotosPhotoIdRouteImport
+    '/fake-checkout/$collectionId': {
+      id: '/fake-checkout/$collectionId'
+      path: '/fake-checkout/$collectionId'
+      fullPath: '/fake-checkout/$collectionId'
+      preLoaderRoute: typeof FakeCheckoutCollectionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/jobs/': {
@@ -624,18 +693,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JobsNewRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/message-photos/$photoId': {
-      id: '/message-photos/$photoId'
-      path: '/message-photos/$photoId'
-      fullPath: '/message-photos/$photoId'
-      preLoaderRoute: typeof MessagePhotosPhotoIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/profile-photos/$photoId': {
-      id: '/profile-photos/$photoId'
-      path: '/profile-photos/$photoId'
-      fullPath: '/profile-photos/$photoId'
-      preLoaderRoute: typeof ProfilePhotosPhotoIdRouteImport
+    '/webhooks/payments': {
+      id: '/webhooks/payments'
+      path: '/webhooks/payments'
+      fullPath: '/webhooks/payments'
+      preLoaderRoute: typeof WebhooksPaymentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/files/$token': {
@@ -650,6 +712,48 @@ declare module '@tanstack/react-router' {
       path: '/admin/items/$itemId'
       fullPath: '/admin/items/$itemId'
       preLoaderRoute: typeof AdminItemsItemIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/payouts/': {
+      id: '/admin/payouts/'
+      path: '/admin/payouts'
+      fullPath: '/admin/payouts/'
+      preLoaderRoute: typeof AdminPayoutsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/payouts/$artisanId': {
+      id: '/admin/payouts/$artisanId'
+      path: '/admin/payouts/$artisanId'
+      fullPath: '/admin/payouts/$artisanId'
+      preLoaderRoute: typeof AdminPayoutsArtisanIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/completion-files/$completionId/$fileId': {
+      id: '/completion-files/$completionId/$fileId'
+      path: '/completion-files/$completionId/$fileId'
+      fullPath: '/completion-files/$completionId/$fileId'
+      preLoaderRoute: typeof CompletionFilesCompletionIdFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/job-photos/$jobId/$photoId': {
+      id: '/job-photos/$jobId/$photoId'
+      path: '/job-photos/$jobId/$photoId'
+      fullPath: '/job-photos/$jobId/$photoId'
+      preLoaderRoute: typeof JobPhotosJobIdPhotoIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/message-files/$messageId/$fileId': {
+      id: '/message-files/$messageId/$fileId'
+      path: '/message-files/$messageId/$fileId'
+      fullPath: '/message-files/$messageId/$fileId'
+      preLoaderRoute: typeof MessageFilesMessageIdFileIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile-photos/$artisanId/$photoId': {
+      id: '/profile-photos/$artisanId/$photoId'
+      path: '/profile-photos/$artisanId/$photoId'
+      fullPath: '/profile-photos/$artisanId/$photoId'
+      preLoaderRoute: typeof ProfilePhotosArtisanIdPhotoIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -677,16 +781,22 @@ const rootRouteChildren: RootRouteChildren = {
   AdminSignInRoute: AdminSignInRoute,
   ArtisansArtisanIdRoute: ArtisansArtisanIdRoute,
   DevMailRoute: DevMailRoute,
-  JobPhotosPhotoIdRoute: JobPhotosPhotoIdRoute,
+  FakeCheckoutCollectionIdRoute: FakeCheckoutCollectionIdRoute,
   JobsJobIdRoute: JobsJobIdRoute,
   JobsNewRoute: JobsNewRoute,
-  MessagePhotosPhotoIdRoute: MessagePhotosPhotoIdRoute,
-  ProfilePhotosPhotoIdRoute: ProfilePhotosPhotoIdRoute,
+  WebhooksPaymentsRoute: WebhooksPaymentsRoute,
   AdminIndexRoute: AdminIndexRoute,
   ArtisansIndexRoute: ArtisansIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
   AdminFilesTokenRoute: AdminFilesTokenRoute,
   AdminItemsItemIdRoute: AdminItemsItemIdRoute,
+  AdminPayoutsArtisanIdRoute: AdminPayoutsArtisanIdRoute,
+  CompletionFilesCompletionIdFileIdRoute:
+    CompletionFilesCompletionIdFileIdRoute,
+  JobPhotosJobIdPhotoIdRoute: JobPhotosJobIdPhotoIdRoute,
+  MessageFilesMessageIdFileIdRoute: MessageFilesMessageIdFileIdRoute,
+  ProfilePhotosArtisanIdPhotoIdRoute: ProfilePhotosArtisanIdPhotoIdRoute,
+  AdminPayoutsIndexRoute: AdminPayoutsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
