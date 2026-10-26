@@ -1,16 +1,20 @@
 import { useState } from "react";
+import { Radio } from "@base-ui/react/radio";
 import { Star } from "lucide-react";
+import { RadioGroup } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { useAppForm } from "@/components/form";
 import { Refusal } from "@/components/page";
+import { Stars } from "@/components/rating";
+import { cn } from "@/lib/utils";
 import { ReportAction } from "@/components/report";
 import { useAction } from "@/components/use-action";
 import type { Domain } from "@/domain";
 import { REVIEW_COMMENT_MAX } from "@/domain/reviews/inputs";
-import { copy, formatDate } from "@/web/copy";
+import { formatDay, saDay } from "@/domain/sa-days";
+import { copy, formatDeadline } from "@/web/copy";
 import { writeReview } from "@/web/reviews";
 
 // Reviews (#138): the party's own Review and the other's on the Job page,
@@ -19,26 +23,11 @@ import { writeReview } from "@/web/reviews";
 
 const t = copy.review;
 
-export type ReviewsShown = NonNullable<Awaited<ReturnType<Domain["reviews"]["ofArtisan"]>>>;
+type ReviewsShown = NonNullable<Awaited<ReturnType<Domain["reviews"]["ofArtisan"]>>>;
 
 type EngagementReviewsView = NonNullable<
   NonNullable<Awaited<ReturnType<Domain["jobs"]["view"]>>>["engagement"]
 >["reviews"];
-
-/** A rating as five stars, read out as "4 out of 5". */
-export function Stars({ rating }: { rating: number }) {
-  return (
-    <span role="img" aria-label={t.outOf(rating)} className="inline-flex gap-0.5">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <Star
-          key={n}
-          aria-hidden
-          className={`size-4 ${n <= rating ? "fill-current text-amber-500" : "text-muted-foreground/40"}`}
-        />
-      ))}
-    </span>
-  );
-}
 
 /**
  * Reviews shown, newest first, each with its rating, the reviewer's shown
@@ -64,11 +53,15 @@ export function ReviewList({
     <div className="space-y-3">
       <ul className="divide-y">
         {items.map((review) => (
-          <li key={review.reviewId} className="space-y-1.5 py-3 first:pt-0">
+          <li key={review.reviewId} className="space-y-2 py-3 first:pt-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Stars rating={review.rating} />
               <span className="text-xs text-muted-foreground">
-                {[review.reviewer ?? t.someone, review.category?.name, formatDate(review.writtenAt)]
+                {[
+                  review.reviewer ?? t.someone,
+                  review.category?.name,
+                  formatDay(saDay(new Date(review.writtenAt))),
+                ]
                   .filter(Boolean)
                   .join(" · ")}
               </span>
@@ -109,63 +102,70 @@ export function WriteReview({
   reviews: EngagementReviewsView;
   asClient: boolean;
 }) {
-  const action = useAction();
-  const [rating, setRating] = useState<number | null>(null);
-  const [comment, setComment] = useState("");
+  const { refusal, run } = useAction();
+  const form = useAppForm({
+    defaultValues: { rating: null as number | null, comment: "" },
+    onSubmit: ({ value: { rating, comment } }) =>
+      rating === null || run(() => writeReview({ data: { engagementId, rating, comment } })),
+  });
   if (!reviews?.open || reviews.mine) return null;
   const of = asClient ? t.theArtisan : t.theClient;
   return (
-    <form
-      className="space-y-3 rounded-lg border p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (rating === null) return;
-        void action.run(() => writeReview({ data: { engagementId, rating, comment } }));
-      }}
-    >
-      <div className="space-y-1">
-        <h3 className="font-medium">{t.write(of)}</h3>
-        <p className="text-xs text-muted-foreground">{t.writeLead(formatDate(reviews.closesAt))}</p>
-      </div>
-      <div className="space-y-1.5">
-        <span id="review-rating" className="text-sm font-medium">
-          {t.rating}
-        </span>
-        <div role="radiogroup" aria-labelledby="review-rating" className="flex gap-1">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              type="button"
-              role="radio"
-              aria-checked={rating === n}
-              aria-label={t.outOf(n)}
-              title={t.outOf(n)}
-              onClick={() => setRating(n)}
-              className="rounded outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Star
-                aria-hidden
-                className={`size-7 ${rating !== null && n <= rating ? "fill-current text-amber-500" : "text-muted-foreground/50"}`}
-              />
-            </button>
-          ))}
+    <form.AppForm>
+      <form.Form className="space-y-4 rounded-lg border p-4">
+        <div className="space-y-1">
+          <h3 className="font-semibold">{t.write(of)}</h3>
+          <p className="text-xs text-muted-foreground">
+            {t.writeLead(formatDeadline(reviews.closesAt))}
+          </p>
         </div>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="review-comment">{t.comment}</Label>
-        <Textarea
-          id="review-comment"
-          value={comment}
-          rows={3}
-          maxLength={REVIEW_COMMENT_MAX}
-          onChange={(event) => setComment(event.target.value)}
-        />
-      </div>
-      <Refusal message={action.refusal} />
-      <Button type="submit" disabled={action.busy || rating === null}>
-        {t.send}
-      </Button>
-    </form>
+        <form.Field name="rating">
+          {(field) => (
+            <div className="space-y-2">
+              <span id="review-rating" className="text-sm font-medium">
+                {t.rating}
+              </span>
+              {/* Base UI's own Radio, as shadcn's item always draws a dot, not a star. */}
+              <RadioGroup
+                aria-labelledby="review-rating"
+                value={field.state.value}
+                onValueChange={(n) => field.handleChange(n as number)}
+                className="flex w-auto gap-1"
+              >
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <Radio.Root
+                    key={n}
+                    value={n}
+                    aria-label={t.outOf(n)}
+                    title={t.outOf(n)}
+                    className="rounded outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Star
+                      aria-hidden
+                      className={cn(
+                        "size-7",
+                        field.state.value !== null && n <= field.state.value
+                          ? "fill-rating text-rating"
+                          : "text-muted-foreground",
+                      )}
+                    />
+                  </Radio.Root>
+                ))}
+              </RadioGroup>
+            </div>
+          )}
+        </form.Field>
+        <form.AppField name="comment">
+          {(field) => (
+            <field.TextareaField label={t.comment} rows={3} maxLength={REVIEW_COMMENT_MAX} />
+          )}
+        </form.AppField>
+        <Refusal message={refusal} />
+        <form.Subscribe selector={(state) => state.values.rating !== null}>
+          {(rated) => <form.Submit disabled={!rated}>{t.send}</form.Submit>}
+        </form.Subscribe>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
@@ -188,11 +188,11 @@ export function EngagementReviewsCard({
       <CardHeader>
         <CardTitle>{t.title}</CardTitle>
         <CardDescription>
-          {reviews.open ? t.openUntil(formatDate(reviews.closesAt)) : t.closed}
+          {reviews.open ? t.openUntil(formatDeadline(reviews.closesAt)) : t.closed}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <section className="space-y-1.5">
+        <section className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-medium">{t.yours}</h3>
             {mine && <Badge variant="secondary">{t.states[mine.state]}</Badge>}
@@ -212,18 +212,22 @@ export function EngagementReviewsCard({
             </p>
           )}
         </section>
-        <section className="space-y-1.5">
+        <section className="space-y-2">
           <h3 className="text-sm font-medium">{t.theirs(of)}</h3>
           {theirs ? (
             <>
               <Stars rating={theirs.rating} />
               {theirs.comment && <p className="text-sm whitespace-pre-line">{theirs.comment}</p>}
-              <p className="text-xs text-muted-foreground">{formatDate(theirs.writtenAt)}</p>
+              <p className="text-xs text-muted-foreground">
+                {formatDay(saDay(new Date(theirs.writtenAt)))}
+              </p>
               <ReportAction about={{ kind: "review", id: theirs.reviewId }} label={t.report} />
             </>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {reviews.open ? t.theirsWaiting(of, formatDate(reviews.closesAt)) : t.theirsNone(of)}
+              {reviews.open
+                ? t.theirsWaiting(of, formatDeadline(reviews.closesAt))
+                : t.theirsNone(of)}
             </p>
           )}
         </section>

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { Actor, AdminActor } from "@/domain/actor";
 import { createHarness, type Harness } from "../support/harness";
+import { createFakePayments, type FakePayments } from "@/domain/fakes/payments";
 import { formatRands } from "@/domain/money";
 import { collectionOf } from "../support/given";
 
@@ -358,6 +359,26 @@ describe("when the Payment arrives", () => {
     ).toMatchObject({ ok: false, refusal: { reason: "read-only" } });
   });
 
+  test("waits on the Artisan until the work is marked complete, and again at a Fix request", async () => {
+    const { domain, given } = await createHarness();
+    const { client, artisan, jobId, quoteId } = await quoted(given);
+    const waits = async () => (await domain.quotes.mine(artisan.actor))![0]!.waitsOnArtisan;
+    expect(await waits()).toBe(false);
+
+    await given.hired(client, quoteId);
+    expect(await waits()).toBe(true);
+    const engagementId = await given.engagementOf(client, jobId);
+    await given.workStarted(client, engagementId);
+    expect(await waits()).toBe(true);
+    await given.markedComplete(artisan, engagementId);
+    expect(await waits()).toBe(false);
+    await domain.engagements.requestFix(client.actor, {
+      engagementId,
+      note: "One wall is patchy.",
+    });
+    expect(await waits()).toBe(true);
+  });
+
   test("joins the Artisan's Active Jobs, without the address", async () => {
     const { domain, given } = await createHarness();
     const { client, artisan, jobId, quoteId } = await quoted(given);
@@ -432,12 +453,31 @@ describe("a failed attempt", () => {
 });
 
 describe("payment events", () => {
-  test("one not signed by the provider is refused and changes nothing", async () => {
+  // Any other secret includes the one the fake once had as a default, which
+  // this public repository shows (#111 review, D26).
+  test.each([
+    [
+      "with no signature",
+      async (payments: FakePayments, collectionId: string) => ({
+        ...(await payments.succeedCollection(collectionId)),
+        headers: {},
+      }),
+    ],
+    [
+      "signed with any other secret",
+      (payments: FakePayments, collectionId: string) =>
+        createFakePayments({
+          webhookSecret: "fake-webhook-secret",
+          state: payments.snapshot(),
+        }).succeedCollection(collectionId),
+    ],
+  ])("one %s is refused and changes nothing", async (_, forge) => {
     const { domain, given, payments } = await createHarness();
     const { client, jobId, quoteId } = await quoted(given);
-    const webhook = await payments.succeedCollection(await given.checkout(client, quoteId));
 
-    const forged = await domain.system.receivePaymentEvent({ ...webhook, headers: {} });
+    const forged = await domain.system.receivePaymentEvent(
+      await forge(payments, await given.checkout(client, quoteId)),
+    );
 
     expect(forged).toEqual({
       ok: false,
@@ -642,6 +682,78 @@ describe("Verification after Hire", () => {
       address: before?.address,
       // Only the Quote's start date has come since, and the Artisan may say they've started.
       engagement: { ...before?.engagement, canClaimStart: true },
+    });
+  });
+});
+
+describe("an Engagement's every step", () => {
+  test("is its own party's only: to anyone else the Engagement does not exist", async () => {
+    const { domain, given } = await createHarness();
+    const { client, artisan, jobId, quoteId } = await quoted(given);
+    await given.hired(client, quoteId);
+    const engagementId = await given.engagementOf(client, jobId);
+    const stranger = await given.client();
+    const otherArtisan = await given.matchableArtisan();
+    const admin = await given.admin();
+    const visitor: Actor = { kind: "visitor" };
+    const anyoneBut = (party: { actor: Actor }) =>
+      [
+        client.actor,
+        artisan.actor,
+        stranger.actor,
+        otherArtisan.actor,
+        admin.actor,
+        visitor,
+      ].filter((actor) => actor !== party.actor);
+    const steps: [string, Actor[], (actor: Actor) => Promise<unknown>][] = [
+      [
+        "Work started",
+        anyoneBut(client),
+        (actor) => domain.engagements.workStarted(actor, { engagementId }),
+      ],
+      [
+        "I've started",
+        anyoneBut(artisan),
+        (actor) => domain.engagements.claimStarted(actor, { engagementId }),
+      ],
+      [
+        "Not started",
+        anyoneBut(client),
+        (actor) => domain.engagements.notStarted(actor, { engagementId }),
+      ],
+      [
+        "Completion",
+        anyoneBut(artisan),
+        (actor) => domain.engagements.complete(actor, { engagementId, note: "Done.", photos: [] }),
+      ],
+      [
+        "Approval",
+        anyoneBut(client),
+        (actor) => domain.engagements.approve(actor, { engagementId }),
+      ],
+      [
+        "Refund",
+        anyoneBut(artisan),
+        (actor) => domain.engagements.refund(actor, { engagementId, labour: "100" }),
+      ],
+      [
+        "Cancellation",
+        [stranger.actor, otherArtisan.actor, admin.actor, visitor],
+        (actor) => domain.engagements.cancel(actor, { engagementId }),
+      ],
+    ];
+
+    for (const [step, actors, take] of steps) {
+      for (const actor of actors) {
+        expect(await take(actor), `${step} by ${actor.kind}`).toMatchObject({
+          ok: false,
+          refusal: { reason: "not-found" },
+        });
+      }
+    }
+    expect((await domain.jobs.view(client.actor, { jobId }))?.engagement).toMatchObject({
+      state: "paid",
+      money: { releasedCents: 0, refundedCents: 0 },
     });
   });
 });

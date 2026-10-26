@@ -21,12 +21,19 @@ import {
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
+// Rules a table keeps itself are triggers, named beside each table with the
+// migration that last wrote them. On D1 a batch rolls back only when one of
+// its statements fails, so a trigger is how a batch whose read no longer
+// holds aborts whole; the commands catch its message where a race is likely
+// (`causedBy` in errors.ts).
+
 /** Times are stored as milliseconds since the epoch. */
 const instant = (name: string) => integer(name, { mode: "timestamp_ms" });
 
 /**
  * Every clock is a row with a due time, fired by "run due clocks" (ADR 0017).
- * A fired clock is never fired again: a trigger in the migration refuses it.
+ * A fired clock is never fired again: `due_clocks_fire_once` refuses it
+ * (migrations/0001).
  */
 export const dueClocks = sqliteTable(
   "due_clocks",
@@ -45,8 +52,15 @@ export const dueClocks = sqliteTable(
 );
 
 /**
- * The money ledger: append-only rows, never updated or deleted (a trigger in
- * the migration refuses both). Every row of one domain event shares an
+ * The money ledger: append-only rows, never updated or deleted
+ * (`ledger_entries_no_update` and `_no_delete`, migrations/0001). Triggers
+ * also refuse a row that takes more of a line than is unreleased
+ * (`ledger_entries_within_unreleased`), more of a Payment than it paid in
+ * (`_within_payment`), Materials released in part (`_materials_all_released`),
+ * a Dispute holding more than is unreleased (`_held_within_unreleased`), all
+ * in migrations/0028, or releasing more than it holds (`_within_held`,
+ * migrations/0026), and any Release, Refund, or hold while a Chargeback
+ * freezes the Engagement (`_not_frozen`, migrations/0028). Every row of one domain event shares an
  * eventId and is written in that event's one atomic batch. What is paid in,
  * released, owed, or refunded is derived from these rows, never stored.
  */
@@ -146,7 +160,9 @@ export const authVerifications = sqliteTable(
 
 /**
  * A Client or an Artisan. Its id is its sign-in identity's. The kind is fixed
- * at sign-up. Until its Email is proven it is a sign-up, not yet an Account.
+ * at sign-up (`accounts_kind_fixed`, migrations/0002). Until its Email is
+ * proven it is a sign-up, not yet an Account. An erased one is never reopened
+ * (`accounts_erased_for_good`, migrations/0034).
  */
 export const accounts = sqliteTable(
   "accounts",
@@ -187,11 +203,23 @@ export const accounts = sqliteTable(
      */
     profileOutOfViewSince: instant("profile_out_of_view_since"),
     profileOutOfViewFor: text("profile_out_of_view_for"),
+    /**
+     * When its person closed it (#141), while it is Closed: it does not sign
+     * in, and nobody finds, offers, or invites it, until it is reopened.
+     */
+    closedAt: instant("closed_at"),
+    /**
+     * When the Admin erased it from a Data request (#141): anonymised, its
+     * names, Email, and password gone, and never reopened.
+     */
+    erasedAt: instant("erased_at"),
+    /** When its person last opened the Notices stream; Notices told since are unread. */
+    noticesSeenAt: instant("notices_seen_at"),
   },
   (table) => [check("accounts_kind", sql`${table.kind} in ('client', 'artisan')`)],
 );
 
-export const NAMES_STATES = ["shown", "held", "released", "refused", "withdrawn"] as const;
+const NAMES_STATES = ["shown", "held", "released", "refused", "withdrawn"] as const;
 
 /**
  * Each time an Account gives its names, at sign-up or changing them, and
@@ -285,7 +313,8 @@ export const rateLimitHits = sqliteTable(
  * A staff identity, not an Account (ADR 0015). While it is an Admin its id is
  * its sign-in identity's; removing it ends that identity, and this row stays
  * so the audit log can still say who acted. The first is written by setup
- * (invitedBy null); a trigger in the migration refuses removing the last.
+ * (invitedBy null); `admins_keep_the_last` refuses removing the last
+ * (migrations/0003).
  */
 export const admins = sqliteTable(
   "admins",
@@ -307,7 +336,7 @@ export const admins = sqliteTable(
 /**
  * Every Admin decision and every logged read: who, what, and when; and what
  * the system logs for the Admin, such as a Payout sent back (#129). Append-only
- * (a trigger in the migration refuses updates and deletes). A decision's row
+ * (`audit_log_no_update` and `_no_delete`, migrations/0019). A decision's row
  * is written in the decision's own batch, and a read's before it is shown.
  */
 export const auditLog = sqliteTable(
@@ -330,7 +359,8 @@ export const auditLog = sqliteTable(
 /**
  * One thing waiting on the Admin. Its kind (a Dispute, a Held Quote, …) says
  * which queue it is in and which decisions it allows. A recorded decision
- * cannot be reopened: a trigger in the migration refuses it.
+ * cannot be reopened: `queue_items_decided_once` and `_decision_fixed` refuse
+ * it (migrations/0003).
  */
 export const queueItems = sqliteTable(
   "queue_items",
@@ -386,6 +416,39 @@ export const supportRequests = sqliteTable(
     check(
       "support_requests_topic",
       sql.raw(`topic in (${SUPPORT_TOPICS.map((topic) => `'${topic}'`).join(", ")})`),
+    ),
+  ],
+);
+
+/** What a Data request asks for: a copy of the Account's data, or its erasure. */
+export const DATA_REQUEST_KINDS = ["copy", "erasure"] as const;
+
+/**
+ * An Account's Data request (#141), decided on its queue item: a copy the
+ * Admin sends as an export the Account downloads, or the erasure of the
+ * Account, which closed it. The export is kept until the Account is erased.
+ */
+export const dataRequests = sqliteTable(
+  "data_requests",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    kind: text("kind", { enum: DATA_REQUEST_KINDS }).notNull(),
+    requestedAt: instant("requested_at").notNull(),
+    /** Where the export is stored once the Admin sent it. */
+    exportKey: text("export_key"),
+    queueItemId: text("queue_item_id")
+      .notNull()
+      .references(() => queueItems.id),
+  },
+  (table) => [
+    index("data_requests_account").on(table.accountId, table.requestedAt),
+    uniqueIndex("data_requests_item").on(table.queueItemId),
+    check(
+      "data_requests_kind",
+      sql.raw(`kind in (${DATA_REQUEST_KINDS.map((kind) => `'${kind}'`).join(", ")})`),
     ),
   ],
 );
@@ -491,16 +554,129 @@ export const suspensions = sqliteTable(
   ],
 );
 
-export const CHECK_STATES = ["submitted", "accepted", "rejected", "removed", "superseded"] as const;
+/** When a device and IP are recorded (#140): at sign-in, and at each Payment. */
+export const SIGHTED_AT = ["sign-in", "payment"] as const;
+
+/**
+ * Each device and IP an Account was seen on (#140), at sign-in and when it
+ * opens a Payment's checkout, for the Signals that look for Accounts sharing
+ * them. The device is the browser's own long-lived id. Only the Admin sees them.
+ */
+export const sightings = sqliteTable(
+  "sightings",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    device: text("device"),
+    ip: text("ip"),
+    at: text("at", { enum: SIGHTED_AT }).notNull(),
+    seenAt: instant("seen_at").notNull(),
+  },
+  (table) => [
+    index("sightings_account").on(table.accountId, table.seenAt),
+    index("sightings_device").on(table.device),
+    index("sightings_ip").on(table.ip),
+    check("sightings_at", sql.raw(`at in (${SIGHTED_AT.map((at) => `'${at}'`).join(", ")})`)),
+  ],
+);
+
+/**
+ * Each send on a Job the Content check refused as a sure hit (#140): it
+ * counts toward nothing but the Signal of one Account refused again and
+ * again on one Job, and the Admin's figures (#142).
+ */
+export const refusedSends = sqliteTable(
+  "refused_sends",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Null once its Draft is discarded: the refusal still counts in the figures (#142). */
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    /** What was sent, for the Admin: "a Quote", "a message", … */
+    what: text("what").notNull(),
+    /** The reason the sender was shown. */
+    reason: text("reason").notNull(),
+    refusedAt: instant("refused_at").notNull(),
+  },
+  (table) => [index("refused_sends_job").on(table.accountId, table.jobId)],
+);
+
+/** The patterns detection sends to the Admin as Signals (#140). */
+export const SIGNAL_KINDS = [
+  /** A Client and an Artisan who transact sharing a device, an IP, or a Payout-account name. */
+  "shared",
+  /** An Artisan's repeated Cancellations or no-shows. */
+  "cancellations",
+  /** A Client's repeated Disputes. */
+  "disputes",
+  /** A Client's repeated Fix requests. */
+  "fix-requests",
+  /** A Client's repeated Chargebacks. */
+  "chargebacks",
+  /** One Account refused again and again on one Job. */
+  "refusals",
+  /** A new Account sharing a device or IP with a Suspended one. */
+  "linked",
+  /** A second sent-back Payout within 90 days. */
+  "sent-back",
+] as const;
+
+/**
+ * Each Signal (#140, ADR 0020): a pattern of behaviour detection found,
+ * raised as a Signals queue item, which the Admin closes or acts on. It
+ * sanctions nobody and nobody is told. What it found is kept, so the same
+ * finding is not raised again; something new is, once none is open.
+ */
+export const signals = sqliteTable(
+  "signals",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind", { enum: SIGNAL_KINDS }).notNull(),
+    /** The Account it is about: a Client of a pair, or a new Account linked to a Suspended one. */
+    accountId: text("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** The pair's Artisan, or the Suspended Account linked. */
+    otherAccountId: text("other_account_id").references(() => accounts.id, {
+      onDelete: "cascade",
+    }),
+    /** The Job an Account was refused on again and again; null once a Draft is discarded. */
+    jobId: text("job_id").references(() => jobs.id, { onDelete: "set null" }),
+    /** Its kind and whom it is about: one is open at a time per key. */
+    key: text("key").notNull(),
+    /** Each thing it found, by an id or value, so a later finding raises only what is new. */
+    found: text("found", { mode: "json" }).$type<string[]>().notNull(),
+    /** What it found, as the Admin reads it. */
+    evidence: text("evidence", { mode: "json" }).$type<string[]>().notNull(),
+    queueItemId: text("queue_item_id")
+      .notNull()
+      .references(() => queueItems.id),
+    raisedAt: instant("raised_at").notNull(),
+  },
+  (table) => [
+    index("signals_key").on(table.key, table.raisedAt),
+    uniqueIndex("signals_item").on(table.queueItemId),
+    check(
+      "signals_kind",
+      sql.raw(`kind in (${SIGNAL_KINDS.map((kind) => `'${kind}'`).join(", ")})`),
+    ),
+  ],
+);
+
+const CHECK_STATES = ["submitted", "accepted", "rejected", "removed", "superseded"] as const;
 
 /**
  * Each check an Artisan submits for Verification: submitted, then accepted
  * (a Verification Badge) or rejected with a reason; an accepted one is
  * removed by the Admin if found false, or superseded once a replacement in
  * its slot is accepted. Expiry is not a state: a check stops being current on
- * its expiry date. Triggers in the migration refuse any other change of
- * state, and an Identity Number or Payout account accepted for two Artisans
- * at once.
+ * its expiry date. `verification_checks_state_moves_forward` refuses any
+ * other change of state (migrations/0006), `_one_holder` an Identity Number
+ * or Payout account accepted for two Artisans (migrations/0036).
  */
 export const verificationChecks = sqliteTable(
   "verification_checks",
@@ -555,8 +731,8 @@ export const verificationChecks = sqliteTable(
 
 /**
  * One of a city's districts, seeded with its suburbs by a migration (a later
- * city is another seed). Never renamed or removed: triggers in the migration
- * refuse both.
+ * city is another seed). Never renamed or removed: `regions_no_update` and
+ * `_no_delete` refuse both (migrations/0007).
  */
 export const regions = sqliteTable("regions", {
   id: text("id").primaryKey(),
@@ -565,8 +741,8 @@ export const regions = sqliteTable("regions", {
 
 /**
  * One of the City's official suburbs, in exactly one Region. The Admin may
- * add one the City creates, but never move, rename, or remove one: triggers
- * in the migration refuse it.
+ * add one the City creates, but never move, rename, or remove one:
+ * `suburbs_no_update` and `_no_delete` refuse it (migrations/0007).
  */
 export const suburbs = sqliteTable(
   "suburbs",
@@ -603,13 +779,14 @@ export const artisanRegions = sqliteTable(
   ],
 );
 
-export const PROFILE_EDIT_STATES = ["held", "released", "refused", "withdrawn"] as const;
+const PROFILE_EDIT_STATES = ["held", "released", "refused", "withdrawn"] as const;
 
 /**
  * Each edit an Artisan makes to their Profile: the whole new version, Held
  * for the Admin's Pre-check whatever the Content check made of it, then
  * released, refused, or withdrawn. The newest one released is the Profile
- * shown; until the first, it shows no About text and no photos.
+ * shown; until the first, it shows no About text and no photos. It is
+ * decided once.
  */
 export const profileEdits = sqliteTable(
   "profile_edits",
@@ -648,8 +825,11 @@ export const JOB_STATES = ["draft", "held", "open", "expired", "closed", "hired"
 /**
  * A Client's request for work. A Draft may omit anything; posting it reads it
  * with the Content check and opens it, or Holds it for the Admin. The trade,
- * the site, the gas answer, and the matching choice lock at posting. Triggers
- * in the migration refuse any other change of state.
+ * the site, the gas answer, and the matching choice lock at posting.
+ * `jobs_state_moves` refuses any other change of state (migrations/0016),
+ * `jobs_only_drafts_deleted` deleting a posted Job (migrations/0010), and
+ * `jobs_hire_again_fixed` and `jobs_posted_fixed` changing what is set once
+ * (migrations/0032, 0035).
  */
 export const jobs = sqliteTable(
   "jobs",
@@ -684,6 +864,8 @@ export const jobs = sqliteTable(
     revision: integer("revision").notNull().default(0),
     /** When it last became Open, at posting, release, or Renew. Quotes count from here. */
     openedAt: instant("opened_at"),
+    /** When it first became Open, at posting or release (#142). Never changes. */
+    postedAt: instant("posted_at"),
     /** When it Expires without a Hire: 14 days after it opened. */
     expiresAt: instant("expires_at"),
     /** When an Open matched Job's next Batch is due; null for an Invite-only one. */
@@ -703,17 +885,19 @@ export const jobs = sqliteTable(
   (table) => [
     index("jobs_client").on(table.clientId, table.updatedAt),
     index("jobs_hire_again").on(table.hireAgainOf),
+    index("jobs_posted").on(table.postedAt),
     check("jobs_state", sql.raw(`state in (${JOB_STATES.map((s) => `'${s}'`).join(", ")})`)),
   ],
 );
 
-export const JOB_EDIT_STATES = ["held", "released", "refused", "withdrawn"] as const;
+const JOB_EDIT_STATES = ["held", "released", "refused", "withdrawn"] as const;
 
 /**
  * Each edit a Client makes to a posted Job, before its first Quote: the new
  * title, description, photos, Site type, and Preferred start. One the
  * Content check clears is released at once; one it is unsure about is Held
- * for the Admin's Pre-check, and the Job shows as it was meanwhile.
+ * for the Admin's Pre-check, and the Job shows as it was meanwhile. It is
+ * decided once.
  */
 export const jobEdits = sqliteTable(
   "job_edits",
@@ -750,7 +934,7 @@ export const jobEdits = sqliteTable(
  * The offer of a Job to one Artisan in a Batch, at most once per Job. The
  * newest offer time of each Artisan places them in the offer order: those
  * offered least recently come first, so nothing else may move it. Passing is
- * recorded once (a trigger in the migration refuses undoing it).
+ * recorded once.
  */
 export const jobMatches = sqliteTable(
   "job_matches",
@@ -776,6 +960,7 @@ export const jobMatches = sqliteTable(
  * Each Invitation a Client sends one Artisan to Quote on a Job, which the
  * Artisan may pass. It stands beside any Job Match the Artisan holds for the
  * Job, which keeps its offer time and so the Artisan's place in the offer order.
+ * It is passed once and never moved.
  */
 export const invitations = sqliteTable(
   "invitations",
@@ -796,7 +981,7 @@ export const invitations = sqliteTable(
   ],
 );
 
-export const QUOTE_STATES = [
+const QUOTE_STATES = [
   "held",
   "refused",
   "unsent",
@@ -813,8 +998,8 @@ export const QUOTE_STATES = [
  * (Sent, if the Job still takes it) or refuses it. A Held one its Artisan
  * withdraws, or one the Job no longer takes once released, is unsent: like a
  * refused one it was never Sent, and the Artisan may send another. A Sent one
- * is Hired, Declined, Withdrawn, or Expires. Triggers in the migration refuse
- * any other change of state.
+ * is Hired, Declined, Withdrawn, or Expires. `quotes_state_moves` refuses any
+ * other change of state (migrations/0014).
  */
 export const quotes = sqliteTable(
   "quotes",
@@ -871,13 +1056,13 @@ export const quotes = sqliteTable(
   ],
 );
 
-export const QUOTE_REVISION_STATES = ["held", "released", "refused", "withdrawn"] as const;
+const QUOTE_REVISION_STATES = ["held", "released", "refused", "withdrawn"] as const;
 
 /**
  * Each revision an Artisan makes to a Sent Quote, whole. One the Content
  * check clears is shown at once; one it is unsure about is Held for the
  * Admin's Pre-check, and the Quote shows as it was meanwhile, as a Job edit
- * does. Its 14 days never restart.
+ * does. Its 14 days never restart. It is decided once.
  */
 export const quoteRevisions = sqliteTable(
   "quote_revisions",
@@ -914,7 +1099,8 @@ export const quoteRevisions = sqliteTable(
  * The messages between one Client and one Artisan on one Job (#125, ADR
  * 0010), opened by the first Quote Sent or the Invitation. Each party's
  * mark says when they last opened it: what was delivered to them since is
- * unread, and they are told of the first of it only.
+ * unread, and they are told of the first of it only. It never moves and is
+ * never removed (`conversations_fixed` and `_kept`, migrations/0015).
  */
 export const conversations = sqliteTable(
   "conversations",
@@ -936,13 +1122,13 @@ export const conversations = sqliteTable(
 /** A file in a message that is not a photo. */
 export type MessageFile = Extract<StoredFile, { kind: "voice-note" | "pdf" }>;
 
-export const MESSAGE_STATES = ["held", "delivered", "refused", "withdrawn", "unsent"] as const;
+const MESSAGE_STATES = ["held", "delivered", "refused", "withdrawn", "unsent"] as const;
 
 /**
  * A message, or a row for an event that is not speech (a Quote Sent, the Hire). A Held
  * one exists only for its sender and the Admin until it is delivered or
- * refused; one delivered is never changed or removed (a trigger in the
- * migration refuses both).
+ * refused; one delivered is never changed or removed (`messages_fixed`,
+ * migrations/0021, and `messages_kept`, migrations/0015).
  */
 export const messages = sqliteTable(
   "messages",
@@ -983,7 +1169,7 @@ export const messages = sqliteTable(
   ],
 );
 
-export const PAYMENT_STATES = ["open", "failed", "paid", "not-hired"] as const;
+const PAYMENT_STATES = ["open", "failed", "paid", "not-hired"] as const;
 
 /** Why a Payment that arrived Hired nobody, and so is refunded whole. */
 export const NOT_HIRED_REASONS = [
@@ -1005,7 +1191,8 @@ export const NOT_HIRED_REASONS = [
  * open until the collection's event arrives: failed, which changes nothing
  * else, or succeeded, which Hires the Quote or applies the Updated Quote
  * (paid) or, if that can no longer happen, refunds the whole Payment
- * (not-hired). A trigger in the migration refuses any other change of state.
+ * (not-hired). `payments_state_moves` refuses any other change of state
+ * (migrations/0025).
  */
 export const payments = sqliteTable(
   "payments",
@@ -1077,8 +1264,8 @@ export const CANCELLED_BY = ["client", "artisan"] as const;
 /**
  * A Hired Quote's work and money, made at Hire, when its Payment arrived:
  * one per Job, Quote, and Payment. The Artisan Fee is fixed here for its whole
- * life. A trigger in the migration refuses changing whose it is or its fee,
- * and any move of its state but the ones built so far.
+ * life. `engagements_fixed` refuses changing whose it is or its fee
+ * (migrations/0038).
  */
 export const engagements = sqliteTable(
   "engagements",
@@ -1112,6 +1299,12 @@ export const engagements = sqliteTable(
     workStartedBy: text("work_started_by", { enum: WORK_STARTED_BY }),
     /** When it was Approved, by the Client or by seven days of silence (#130). */
     completedAt: instant("completed_at"),
+    /**
+     * When its Review window closes, once a Chargeback that froze it was
+     * decided: later by the time it was frozen. Until then, seven days after
+     * `completedAt`.
+     */
+    reviewWindowClosesAt: instant("review_window_closes_at"),
     /** When either party cancelled it before Approval (#133). */
     cancelledAt: instant("cancelled_at"),
     cancelledBy: text("cancelled_by", { enum: CANCELLED_BY }),
@@ -1134,20 +1327,13 @@ export const engagements = sqliteTable(
  * Client rejects it, the Client's Payment of its difference accepts it, or
  * the Engagement is Cancelled while it is proposed (ended).
  */
-export const UPDATED_QUOTE_STATES = [
-  "proposed",
-  "withdrawn",
-  "rejected",
-  "accepted",
-  "ended",
-] as const;
+const UPDATED_QUOTE_STATES = ["proposed", "withdrawn", "rejected", "accepted", "ended"] as const;
 
 /**
  * Each Updated Quote the Artisan proposes on an Engagement before Completion
  * (#134, ADR 0019): the Labour and Materials it stood at then, and the new
  * ones, neither lower. One is proposed at a time. What it proposes never
- * changes, and its state moves forward only (a trigger in the migration
- * refuses anything else).
+ * changes, and its state moves forward only.
  */
 export const updatedQuotes = sqliteTable(
   "updated_quotes",
@@ -1189,13 +1375,13 @@ export const updatedQuotes = sqliteTable(
  * may answer it), refused by the Admin, withdrawn by the Artisan while Held,
  * or unsent if the Engagement had moved on by its release.
  */
-export const COMPLETION_STATES = ["held", "made", "refused", "withdrawn", "unsent"] as const;
+const COMPLETION_STATES = ["held", "made", "refused", "withdrawn", "unsent"] as const;
 
 /** The Client's answer to a made Completion; silence for seven days is Approval. */
-export const COMPLETION_ANSWERS = ["approved", "approved-by-silence", "fix-requested"] as const;
+const COMPLETION_ANSWERS = ["approved", "approved-by-silence", "fix-requested"] as const;
 
 /** Where a Fix request's note stands: shown to the Artisan, Held for the Admin, or refused. */
-export const FIX_NOTE_STATES = ["shown", "held", "refused"] as const;
+const FIX_NOTE_STATES = ["shown", "held", "refused"] as const;
 
 /** A Completion's document, and whether it is the certificate the law requires (Completion evidence). */
 export type CompletionDocument = Extract<StoredFile, { kind: "photo" | "pdf" }> & {
@@ -1206,8 +1392,7 @@ export type CompletionDocument = Extract<StoredFile, { kind: "photo" | "pdf" }> 
  * Each time the Artisan marks the work complete (#130): a note, the
  * after-work photos, and any documents, the certificate among them. Once made,
  * the Client answers it once: Approval, or a Fix request with a note, after
- * which the next Completion is a new row. A trigger in the migration refuses
- * any other change.
+ * which the next Completion is a new row.
  */
 export const completions = sqliteTable(
   "completions",
@@ -1267,7 +1452,7 @@ export const completions = sqliteTable(
  * failed one the bank sent back to the Client by a Chargeback instead, so it
  * is never sent or paid by hand (#137).
  */
-export const REFUND_STATES = [
+const REFUND_STATES = [
   "waiting",
   "sent",
   "paused",
@@ -1282,20 +1467,14 @@ export const REFUND_STATES = [
  * Cancellation (#133), the Admin's decision of a Dispute (#135), or of a
  * Chargeback, for what the bank did not send back (#137).
  */
-export const REFUND_CAUSES = [
-  "artisan",
-  "not-hired",
-  "cancellation",
-  "dispute",
-  "chargeback",
-] as const;
+const REFUND_CAUSES = ["artisan", "not-hired", "cancellation", "dispute", "chargeback"] as const;
 
 /**
  * Each Refund of a Payment to its Client (#132): unreleased money, never the
  * Protection Fee, unless the Payment Hired nobody, when the whole of it goes
  * back. Our id is the payment adapter's idempotency key. What it refunds of
  * the Labour, Materials, and Protection Fee never changes; its state moves
- * forward only (a trigger in the migration refuses anything else).
+ * forward only.
  */
 export const refunds = sqliteTable(
   "refunds",
@@ -1357,23 +1536,23 @@ export const DISPUTED_BY = ["client", "artisan"] as const;
  * What a Dispute is against: the Client's, a Completion; the Artisan's, a Fix
  * request or a Cancellation's refund of the Labour.
  */
-export const DISPUTE_GROUNDS = ["completion", "fix-request", "cancellation"] as const;
+const DISPUTE_GROUNDS = ["completion", "fix-request", "cancellation"] as const;
 
 /**
  * A Dispute's states: open until the Admin decides it, or until nothing is
  * held, when it is settled by the parties.
  */
-export const DISPUTE_STATES = ["open", "settled", "decided"] as const;
+const DISPUTE_STATES = ["open", "settled", "decided"] as const;
 
 /** Where a Dispute's reason stands: shown to the other party, or kept for the Admin, who was unsure of it. */
-export const DISPUTE_REASON_STATES = ["shown", "held"] as const;
+const DISPUTE_REASON_STATES = ["shown", "held"] as const;
 
 /**
  * An Engagement's one Dispute (#135): the Labour it holds, named by the
  * Client or all of it unreleased for the Artisan, which the Admin splits
  * between Release and Refund, finally. What is held now is derived from the
  * ledger. What it was opened for never changes, and its state moves forward
- * once (a trigger in the migration refuses anything else).
+ * once.
  */
 export const disputes = sqliteTable(
   "disputes",
@@ -1417,10 +1596,10 @@ export const disputes = sqliteTable(
  * A Chargeback's states: open, while the bank looks into it; closed, by the
  * bank, with what it sent back to the Client; and decided, by the Admin.
  */
-export const CHARGEBACK_STATES = ["open", "closed", "decided"] as const;
+const CHARGEBACK_STATES = ["open", "closed", "decided"] as const;
 
 /** How the bank closed a Chargeback, as the payment adapter says. */
-export const CHARGEBACK_OUTCOMES = [
+const CHARGEBACK_OUTCOMES = [
   "won",
   "lost",
   "accepted",
@@ -1434,8 +1613,8 @@ export const CHARGEBACK_OUTCOMES = [
  * it, the Admin decides the Engagement's unreleased money: released to the
  * Artisan, or left with the Chargeback, the Client's, refunded only for what
  * the bank did not send back. Of what the bank sent back, what the platform
- * no longer held is its loss. A trigger in the migration refuses any other
- * change.
+ * no longer held is its loss. `chargebacks_state_moves` refuses any other
+ * change (migrations/0028).
  */
 export const chargebacks = sqliteTable(
   "chargebacks",
@@ -1487,7 +1666,7 @@ export const chargebacks = sqliteTable(
  * Review does; published, or refused; and a published one removed, from a
  * Report (#138).
  */
-export const REVIEW_STATES = ["held", "published", "refused", "removed"] as const;
+const REVIEW_STATES = ["held", "published", "refused", "removed"] as const;
 
 /** The only grounds on which the Admin refuses or removes a Review (#138). */
 export const REVIEW_GROUNDS = ["fraud", "abuse", "personal-data"] as const;
@@ -1495,7 +1674,7 @@ export const REVIEW_GROUNDS = ["fraud", "abuse", "personal-data"] as const;
 /**
  * One party's Review of the other on a Completed Engagement (#138, ADR 0012):
  * a rating from 1 to 5 and an optional comment, one per party, never edited
- * or withdrawn. A trigger in the migration refuses changing what it says and
+ * or withdrawn. `reviews_fixed` (migrations/0031) refuses changing what it says and
  * any move of its state but held to published or refused, and published to
  * removed.
  */
@@ -1540,7 +1719,7 @@ export const reviews = sqliteTable(
   ],
 );
 
-export const PAYOUT_STATES = [
+const PAYOUT_STATES = [
   "created",
   "pending",
   "paused",
@@ -1562,8 +1741,7 @@ export const STOPPED_PAYOUT_STATES = ["refused", "sent-back", "unsent"] as const
  * refuse it, at once or later, or send it back even days after it was paid;
  * one that never reached the adapter before its account stopped being
  * current is unsent (#129). Those three leave the Release owed again, and a
- * Release has at most one Payout in any other state. A trigger in the
- * migration refuses any other change.
+ * Release has at most one Payout in any other state.
  */
 export const payouts = sqliteTable(
   "payouts",

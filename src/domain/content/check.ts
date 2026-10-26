@@ -1,9 +1,8 @@
 import type { Context } from "../context";
 import type { ContentContext, ContentVerdict } from "../ports";
 import { ok, refuse, type Result } from "../result";
+import { recordRefusal, type SentOn } from "../signals";
 import type { StoredFile } from "../uploads";
-import { Locked } from "../uploads/bytes";
-import { pdfText } from "../uploads/pdf";
 import {
   patternHit,
   patternMessage,
@@ -16,10 +15,11 @@ import {
 // it. Photos are read by OCR, voice notes turned into text, and PDFs have
 // their text extracted, so everything becomes text. Patterns then refuse what
 // is certain, free and at once; the content reader reads for the rest. A sure
-// hit is refused with the reason, and counts toward nothing: the check writes
-// nothing. An unsure result, or a check that cannot run, Holds the item.
+// hit is refused with the reason, and counts toward nothing but a Signal of
+// one Account refused again and again on one Job (#140). An unsure result, or
+// a check that cannot run, Holds the item.
 
-export type ContentToCheck = {
+type ContentToCheck = {
   /** The item's own text: a message, a description, an Account's names. */
   text: string;
   /** The files sent with it, as the upload path stored them. */
@@ -28,6 +28,8 @@ export type ContentToCheck = {
   context: ContentContext;
   /** Before Payment, what a Conversation must not be told: its Job's address, and surnames. */
   withheld?: Withheld;
+  /** Who sends it on which Job: a sure hit is recorded for the Signal of refusals (#140). */
+  refusedOn?: SentOn;
 };
 
 export type Checked =
@@ -42,7 +44,8 @@ export type Checked =
 
 /**
  * Reads what is sent. A sure hit is a refusal saying what to take out; the
- * sender keeps the draft, and nothing is recorded. Otherwise it is clear or
+ * sender keeps the draft, and only a send on a Job is recorded, for the Signal
+ * of one Account refused again and again on it. Otherwise it is clear or
  * Held, with everything that was read as `text`.
  */
 export async function checkContent(
@@ -53,10 +56,14 @@ export async function checkContent(
   const filesText = read.texts.filter((part) => part.trim()).join("\n\n");
   const text = [item.text, filesText].filter((part) => part.trim()).join("\n\n");
 
+  const refused = async (reason: string) => {
+    if (item.refusedOn) await recordRefusal(ctx, item.refusedOn, reason);
+    return refuse("content", reason);
+  };
   const hit = patternHit(text, item.context);
-  if (hit) return refuse("content", patternMessage(hit));
+  if (hit) return refused(patternMessage(hit));
   const withheld = item.context.kind === "before-payment" && withheldHit(text, item.withheld ?? {});
-  if (withheld) return refuse("content", withheldMessage(withheld));
+  if (withheld) return refused(withheldMessage(withheld));
   if (read.unread) return ok({ verdict: "held", reason: read.unread, text, filesText });
 
   let verdict: ContentVerdict;
@@ -74,7 +81,7 @@ export async function checkContent(
     case "clear":
       return ok({ verdict: "clear", text });
     case "sure-hit":
-      return refuse("content", verdict.reason);
+      return refused(verdict.reason);
     case "unsure":
     case "cannot-run":
       return ok({ verdict: "held", reason: verdict.reason, text, filesText });
@@ -109,15 +116,15 @@ export async function readFiles(ctx: Context, files: readonly StoredFile[]) {
           );
           break;
         case "pdf": {
-          const pdf = await pdfText(bytes);
+          const pages = await ctx.ports.contentReader.readPdf(bytes);
           // A scanned page is a picture of text, which text extraction cannot read.
-          if (pdf.scannedPages > 0) unread ??= "A PDF with scanned pages cannot be read.";
-          texts.push(pdf.text);
+          if (pages.some((page) => !page)) unread ??= "A PDF with scanned pages cannot be read.";
+          texts.push(pages.join("\n\n"));
           break;
         }
       }
     } catch (error) {
-      if (!(error instanceof Locked)) console.error(`File ${file.key} could not be read`, error);
+      console.error(`File ${file.key} could not be read`, error);
       unread ??= `A ${FILE_NAMES[file.kind]} could not be read.`;
     }
   }

@@ -1,6 +1,7 @@
 import { and, desc, eq, exists, inArray, lte, ne, or, sql, type SQLWrapper } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { shownName } from "../accounts/names";
+import { notFrozen } from "../chargebacks/frozen";
 import type { Context } from "../context";
 import { accounts, engagements, jobs, reviews, REVIEW_GROUNDS } from "../schema";
 import { SERVICE_CATEGORY_NAMES } from "../service-categories";
@@ -22,7 +23,7 @@ export const REVIEW_GROUND_NAMES: Record<ReviewGround, string> = {
 };
 
 /** How many Reviews a list shows at a time. */
-export const REVIEWS_PAGE = 20;
+const REVIEWS_PAGE = 20;
 
 /** The Review with its Engagement's parties, Job, and when it was Completed; null if none. */
 export async function reviewRow(ctx: Context, reviewId: string) {
@@ -51,7 +52,8 @@ export async function reviewsOn(ctx: Context, engagementId: string): Promise<Rev
 
 /**
  * The SQL that is true of a Review shown at `now`: published, and the other
- * party has written theirs or the window has closed. Join `engagements`.
+ * party has written theirs or the window has closed, not waiting on a
+ * Chargeback. Join `engagements`.
  */
 function shownAt(ctx: Context, now: Date) {
   const other = alias(reviews, "other_review");
@@ -66,12 +68,19 @@ function shownAt(ctx: Context, now: Date) {
             and(eq(other.engagementId, reviews.engagementId), ne(other.authorId, reviews.authorId)),
           ),
       ),
-      lte(engagements.completedAt, new Date(now.getTime() - REVIEW_WINDOW_MS)),
+      and(
+        lte(
+          sql`coalesce(${engagements.reviewWindowClosesAt}, ${engagements.completedAt} + ${REVIEW_WINDOW_MS})`,
+          now.getTime(),
+        ),
+        // While a Chargeback freezes the Engagement, its window waits.
+        notFrozen(ctx, engagements.id),
+      ),
     ),
   );
 }
 
-export type ReviewSummary = { average: number | null; count: number };
+type ReviewSummary = { average: number | null; count: number };
 
 const NONE: ReviewSummary = { average: null, count: 0 };
 
@@ -81,16 +90,23 @@ export async function summariesOf(
   reviewedIds: string[] | SQLWrapper,
   now = ctx.now(),
 ): Promise<{ get(id: string): ReviewSummary }> {
-  const rows = await ctx.db
-    .select({
-      reviewedId: reviews.reviewedId,
-      average: sql<number>`avg(${reviews.rating})`,
-      count: sql<number>`count(*)`,
-    })
-    .from(reviews)
-    .innerJoin(engagements, eq(engagements.id, reviews.engagementId))
-    .where(and(inArray(reviews.reviewedId, reviewedIds), shownAt(ctx, now)))
-    .groupBy(reviews.reviewedId);
+  const of = (ids: string[] | SQLWrapper) =>
+    ctx.db
+      .select({
+        reviewedId: reviews.reviewedId,
+        average: sql<number>`avg(${reviews.rating})`,
+        count: sql<number>`count(*)`,
+      })
+      .from(reviews)
+      .innerJoin(engagements, eq(engagements.id, reviews.engagementId))
+      .where(and(inArray(reviews.reviewedId, ids), shownAt(ctx, now)))
+      .groupBy(reviews.reviewedId);
+  // D1 binds at most 100 values a query, so a long list, such as Browse's, is read in parts.
+  const parts: (string[] | SQLWrapper)[] = [];
+  if (!Array.isArray(reviewedIds)) parts.push(reviewedIds);
+  else
+    for (let at = 0; at < reviewedIds.length; at += 90) parts.push(reviewedIds.slice(at, at + 90));
+  const rows = (await Promise.all(parts.map(of))).flat();
   const byId = new Map(rows.map(({ reviewedId, ...summary }) => [reviewedId, summary]));
   return { get: (id) => byId.get(id) ?? NONE };
 }
@@ -103,12 +119,25 @@ export async function summariesOf(
 export async function reviewsShown(ctx: Context, reviewedId: string, page = 0) {
   // Read once, so the count and the page agree at the window's close.
   const now = ctx.now();
-  const [summaries, rows] = await Promise.all([
+  const [summaries, rows, byRating] = await Promise.all([
     summariesOf(ctx, [reviewedId], now),
     pageAt(ctx, reviewedId, page, now),
+    ctx.db
+      .select({ rating: reviews.rating, count: sql<number>`count(*)` })
+      .from(reviews)
+      .innerJoin(engagements, eq(engagements.id, reviews.engagementId))
+      .where(and(eq(reviews.reviewedId, reviewedId), shownAt(ctx, now)))
+      .groupBy(reviews.rating),
   ]);
   return {
     ...summaries.get(reviewedId),
+    /** How many of them gave each rating: what anyone reading them all would count. */
+    ratings: Object.fromEntries(
+      ([5, 4, 3, 2, 1] as const).map((rating) => [
+        rating,
+        byRating.find((row) => row.rating === rating)?.count ?? 0,
+      ]),
+    ) as Record<1 | 2 | 3 | 4 | 5, number>,
     items: rows
       .slice(0, REVIEWS_PAGE)
       .map(({ category, name, tradingName, namesShown, kind, ...review }) => ({

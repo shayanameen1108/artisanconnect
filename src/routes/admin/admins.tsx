@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useAppForm } from "@/components/form";
 import { initials } from "@/components/app-header";
-import { Page, Refusal } from "@/components/page";
+import { useAction } from "@/components/use-action";
+import { useConfirm } from "@/components/confirm";
+import { Page, Refusal, withSidebar } from "@/components/page";
 import { getAdmins, inviteAdmin, removeAdmin } from "@/web/admin";
-import { copy, formatDate } from "@/web/copy";
+import { copy, formatDate, pageTitle } from "@/web/copy";
 import { onlyForAdmins } from "@/web/guards";
 
 export const Route = createFileRoute("/admin/admins")({
@@ -24,6 +25,7 @@ export const Route = createFileRoute("/admin/admins")({
     onlyForAdmins(context);
   },
   loader: () => getAdmins(),
+  head: () => ({ meta: [{ title: pageTitle(t.title) }] }),
   component: Admins,
 });
 
@@ -35,9 +37,8 @@ type Admin = Awaited<ReturnType<typeof getAdmins>>[number];
 function Admins() {
   const admins = Route.useLoaderData();
   return (
-    <Page title={t.title}>
-      <p className="max-w-2xl text-sm text-muted-foreground">{t.lead}</p>
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+    <Page title={t.title} lead={t.lead}>
+      <div className={withSidebar}>
         <Card className="py-0">
           <ul className="divide-y">
             {admins.map((admin) => (
@@ -52,21 +53,17 @@ function Admins() {
 }
 
 function AdminRow({ admin }: { admin: Admin }) {
-  const router = useRouter();
   const navigate = useNavigate();
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const confirm = useConfirm();
+  const { busy, refusal, run } = useAction();
 
   async function remove() {
-    setBusy(true);
-    setRefusal(null);
-    const result = await removeAdmin({ data: { adminId: admin.adminId } });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    await router.invalidate();
+    if (!(await confirm(t.removeLead(admin.email)))) return;
     // Removing yourself signs you out.
-    if (admin.you) await navigate({ to: "/admin/sign-in" });
+    void run(
+      () => removeAdmin({ data: { adminId: admin.adminId } }),
+      () => admin.you && navigate({ to: "/admin/sign-in" }),
+    );
   }
 
   return (
@@ -86,54 +83,37 @@ function AdminRow({ admin }: { admin: Admin }) {
               : t.setUp(formatDate(admin.invitedAt))}
           </div>
         </div>
-        {!confirming && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!admin.removable}
-            title={admin.removable ? undefined : t.last}
-            onClick={() => setConfirming(true)}
-          >
-            {t.remove}
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!admin.removable || busy}
+          title={admin.removable ? undefined : t.last}
+          onClick={() => void remove()}
+        >
+          {t.remove}
+        </Button>
       </div>
-      {confirming && (
-        <div className="space-y-3 rounded-lg border p-3">
-          <p className="text-sm">{t.removeLead(admin.email)}</p>
-          <div className="flex gap-2">
-            <Button variant="destructive" size="sm" disabled={busy} onClick={() => void remove()}>
-              {t.confirm}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-              {t.cancel}
-            </Button>
-          </div>
-        </div>
-      )}
       <Refusal message={refusal} />
     </li>
   );
 }
 
 function InviteCard({ admins }: { admins: Admin[] }) {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
   const [invited, setInvited] = useState<string | null>(null);
-
-  async function invite() {
-    setBusy(true);
-    setRefusal(null);
-    setInvited(null);
-    const result = await inviteAdmin({ data: { email } });
-    setBusy(false);
-    if (!result.ok) return setRefusal(result.refusal.message);
-    setInvited(result.value.email);
-    setEmail("");
-    await router.invalidate();
-  }
+  const { refusal, run } = useAction();
+  const form = useAppForm({
+    defaultValues: { email: "" },
+    onSubmit: ({ value, formApi }) => {
+      setInvited(null);
+      return run(
+        () => inviteAdmin({ data: value }),
+        (sent) => {
+          setInvited(sent.email);
+          formApi.reset();
+        },
+      );
+    },
+  });
 
   return (
     <Card size="sm" className="self-start">
@@ -141,34 +121,24 @@ function InviteCard({ admins }: { admins: Admin[] }) {
         <CardTitle>{t.invite}</CardTitle>
         <CardDescription>{t.inviteLead}</CardDescription>
       </CardHeader>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void invite();
-        }}
-      >
-        <CardContent className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="invite-email">{t.email}</Label>
-            <Input
-              id="invite-email"
-              type="email"
-              autoComplete="off"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </div>
-          <Refusal message={refusal} />
-          {invited && admins.some((admin) => admin.email === invited) && (
-            <p className="text-sm text-muted-foreground">{t.invited(invited)}</p>
-          )}
-        </CardContent>
-        <CardFooter className="pt-4">
-          <Button type="submit" disabled={busy || !email.trim()}>
-            {t.send}
-          </Button>
-        </CardFooter>
-      </form>
+      <form.AppForm>
+        <form.Form>
+          <CardContent className="space-y-3">
+            <form.AppField name="email">
+              {(field) => <field.TextField label={t.email} type="email" autoComplete="off" />}
+            </form.AppField>
+            <Refusal message={refusal} />
+            {invited && admins.some((admin) => admin.email === invited) && (
+              <p className="text-sm text-muted-foreground">{t.invited(invited)}</p>
+            )}
+          </CardContent>
+          <CardFooter className="pt-4">
+            <form.Subscribe selector={(state) => !!state.values.email.trim()}>
+              {(given) => <form.Submit disabled={!given}>{t.send}</form.Submit>}
+            </form.Subscribe>
+          </CardFooter>
+        </form.Form>
+      </form.AppForm>
     </Card>
   );
 }

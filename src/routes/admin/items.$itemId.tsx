@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
-import { ChevronRight, Eye } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import {
   Card,
   CardContent,
@@ -16,12 +18,13 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Blocks, QueueCounts } from "@/components/admin";
-import { Page, Refusal } from "@/components/page";
+import { Page, Refusal, withSidebar } from "@/components/page";
 import { formatRands } from "@/domain/money";
-import { splitOf, type Block, type DecisionField, type ItemRow } from "@/domain/queues";
+import { splitOf } from "@/domain/queue-names";
+import type { Block, DecisionField, ItemRow } from "@/domain/queues";
 import { cn } from "@/lib/utils";
 import { decideQueueItem, decideQueueRow, getQueueItem, openLoggedRead } from "@/web/admin";
-import { copy, formatDate } from "@/web/copy";
+import { copy, formatDate, pageTitle } from "@/web/copy";
 import { onlyForAdmins } from "@/web/guards";
 
 export const Route = createFileRoute("/admin/items/$itemId")({
@@ -29,6 +32,9 @@ export const Route = createFileRoute("/admin/items/$itemId")({
     onlyForAdmins(context);
   },
   loader: ({ params }) => getQueueItem({ data: { itemId: params.itemId } }),
+  head: ({ loaderData }) => ({
+    meta: [{ title: pageTitle(loaderData?.title ?? copy.admin.home.title) }],
+  }),
   component: QueueItemPage,
 });
 
@@ -37,31 +43,28 @@ const t = copy.admin.item;
 type Item = Awaited<ReturnType<typeof getQueueItem>>;
 
 /**
- * A queue item in the Contract look (#107): breadcrumb with queue counts, a
+ * A queue item (#107): breadcrumb with queue counts, a
  * highlighted Decision card, tabs, and a sidebar. Each kind of item fills the
  * tabs and sidebar; a recorded decision is shown and never reopened.
  */
 function QueueItemPage() {
   const item = Route.useLoaderData();
   return (
-    <Page>
-      <div className="space-y-3">
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <Link to="/admin" className="hover:text-foreground">
-            {t.queues}
-          </Link>
-          <ChevronRight className="size-3" />
-          <Link to="/admin" search={{ queue: item.queue }} className="hover:text-foreground">
-            {copy.admin.queues[item.queue]}
-          </Link>
-        </div>
+    <Page
+      crumbs={[
+        { to: "/admin", label: t.queues },
+        { to: "/admin", search: { queue: item.queue }, label: copy.admin.queues[item.queue] },
+      ]}
+      title={item.title}
+      status={
+        item.decided ? <Badge variant="secondary">{t.decided}</Badge> : <Badge>{t.open}</Badge>
+      }
+    >
+      {/* On a phone the crumbs and the Sidebar's menu say where the Admin is. */}
+      <div className="hidden md:block">
         <QueueCounts counts={item.counts} current={item.queue} />
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{item.title}</h1>
-          {item.decided ? <Badge variant="secondary">{t.decided}</Badge> : <Badge>{t.open}</Badge>}
-        </div>
       </div>
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+      <div className={withSidebar}>
         <div className="min-w-0 space-y-6">
           {item.decided ? (
             <DecidedCard decided={item.decided} />
@@ -71,7 +74,7 @@ function QueueItemPage() {
           {item.rows && <RowsCard itemId={item.id} rows={item.rows} highlighted={!item.decided} />}
           {item.tabs.length > 0 && (
             <Tabs defaultValue={item.tabs[0]!.key}>
-              <TabsList variant="line">
+              <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
                 {item.tabs.map((tab) => (
                   <TabsTrigger key={tab.key} value={tab.key}>
                     {tab.label}
@@ -113,7 +116,7 @@ function QueueItemPage() {
               <ol className="space-y-2 text-sm">
                 {item.timeline.map((entry, index) => (
                   <li key={index} className="flex gap-2">
-                    <div className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />
+                    <div className="mt-2 size-2 shrink-0 rounded-full bg-primary" aria-hidden />
                     <div>
                       <div>{entry.text}</div>
                       <div className="text-xs text-muted-foreground">{formatDate(entry.at)}</div>
@@ -132,19 +135,18 @@ function QueueItemPage() {
 /** The highlighted card: only the decisions allowed now, each saying who is told. */
 function DecisionCard({ item }: { item: Item }) {
   const router = useRouter();
-  const [chosen, setChosen] = useState<string | null>(null);
+  // The only decision allowed is chosen already, as one less click.
+  const only = item.decisions.length === 1 ? item.decisions[0]! : null;
+  const [chosen, setChosen] = useState<string | null>(only?.key ?? null);
   const [reason, setReason] = useState("");
-  const [fields, setFields] = useState<Record<string, string>>({});
+  const [fields, setFields] = useState<Record<string, string>>(() => defaultsOf(only));
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const option = item.decisions.find((decision) => decision.key === chosen);
 
   function choose(key: string) {
     setChosen(key);
-    const decision = item.decisions.find((each) => each.key === key);
-    setFields(
-      Object.fromEntries((decision?.fields ?? []).map((field) => [field.key, field.value])),
-    );
+    setFields(defaultsOf(item.decisions.find((each) => each.key === key)));
   }
 
   async function record() {
@@ -168,10 +170,10 @@ function DecisionCard({ item }: { item: Item }) {
   }
 
   return (
-    <Card className="ring-2 ring-primary/80">
+    <Card className="ring-primary">
       <CardHeader>
-        <CardDescription>{t.decision}</CardDescription>
-        <CardTitle className="text-lg">{option?.label ?? t.choose}</CardTitle>
+        <CardDescription className="text-xs font-medium text-primary">{t.decision}</CardDescription>
+        <CardTitle className="text-lg font-semibold">{option?.label ?? t.choose}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {item.decisions.length === 0 ? (
@@ -200,7 +202,7 @@ function DecisionCard({ item }: { item: Item }) {
           />
         ))}
         {option && option.reason !== "none" && (
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="reason">
               {option.reason === "required"
                 ? (option.reasonLabel ?? t.reason)
@@ -241,10 +243,10 @@ function DecisionCard({ item }: { item: Item }) {
 
 function DecidedCard({ decided }: { decided: NonNullable<Item["decided"]> }) {
   return (
-    <Card className="ring-2 ring-primary/80">
+    <Card className="ring-primary">
       <CardHeader>
-        <CardDescription>{t.decision}</CardDescription>
-        <CardTitle className="text-lg">{t.recorded(decided.label)}</CardTitle>
+        <CardDescription className="text-xs font-medium text-primary">{t.decision}</CardDescription>
+        <CardTitle className="text-lg font-semibold">{t.recorded(decided.label)}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {decided.reason && (
@@ -277,10 +279,12 @@ function RowsCard({
   highlighted: boolean;
 }) {
   return (
-    <Card className={cn(highlighted && "ring-2 ring-primary/80")}>
+    <Card className={cn(highlighted && "ring-primary")}>
       <CardHeader>
-        <CardDescription>{t.decision}</CardDescription>
-        <CardTitle className="text-lg">{highlighted ? t.eachRow : t.rowsNow}</CardTitle>
+        <CardDescription className="text-xs font-medium text-primary">{t.decision}</CardDescription>
+        <CardTitle className="text-lg font-semibold">
+          {highlighted ? t.eachRow : t.rowsNow}
+        </CardTitle>
       </CardHeader>
       <CardContent className="divide-y">
         {rows.length === 0 && <p className="text-sm text-muted-foreground">{t.noRows}</p>}
@@ -304,10 +308,7 @@ function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
   function choose(key: string) {
     setChosen(key);
     setRefusal(null);
-    const decision = row.decisions.find((each) => each.key === key);
-    setFields(
-      Object.fromEntries((decision?.fields ?? []).map((field) => [field.key, field.value])),
-    );
+    setFields(defaultsOf(row.decisions.find((each) => each.key === key)));
   }
 
   async function record() {
@@ -332,7 +333,7 @@ function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
   return (
     <div className="space-y-3 py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="font-medium">{row.title}</h3>
+        <h3 className="font-semibold">{row.title}</h3>
         <Badge variant={row.state === "Waiting" ? "default" : "secondary"}>{row.state}</Badge>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -350,7 +351,7 @@ function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
         />
       ))}
       {row.decisions.length > 0 && (
-        <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+        <div className="space-y-4 rounded-lg border bg-muted p-4">
           <div className="flex flex-wrap gap-2">
             {row.decisions.map((decision) => (
               <Button
@@ -374,7 +375,7 @@ function RowDecision({ itemId, row }: { itemId: string; row: ItemRow }) {
             />
           ))}
           {option && option.reason !== "none" && (
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label htmlFor={`${row.id}-reason`}>
                 {option.reason === "required"
                   ? (option.reasonLabel ?? t.reason)
@@ -426,22 +427,20 @@ function DecisionFieldInput({
     return (
       <div className="space-y-2">
         <div className="flex justify-between gap-3 text-sm">
-          <Label htmlFor={id}>
+          <Label id={id}>
             {label}: {formatRands(released)}
           </Label>
           <span className="text-muted-foreground">
             {field.restLabel ?? t.splitRefunded}: {formatRands(total - released)}
           </span>
         </div>
-        <input
-          id={id}
-          type="range"
+        <Slider
+          aria-labelledby={id}
           min={0}
           max={total}
           step={total % 100 === 0 ? 100 : 1}
-          value={released}
-          onChange={(event) => onChange(event.target.value)}
-          className="w-full accent-primary"
+          value={[released]}
+          onValueChange={(next) => onChange(String(Array.isArray(next) ? next[0] : next))}
         />
         <p className="text-xs text-muted-foreground">
           {t.splitOf(formatRands(total), field.wholeLabel)}
@@ -449,8 +448,28 @@ function DecisionFieldInput({
       </div>
     );
   }
+  if (field.type === "choice") {
+    return (
+      <div className="space-y-2">
+        <Label id={id}>{label}</Label>
+        <RadioGroup
+          aria-labelledby={id}
+          value={value}
+          onValueChange={(next) => onChange(String(next))}
+          className="flex flex-wrap gap-4"
+        >
+          {field.options?.map((option) => (
+            <Label key={option.value} className="font-normal">
+              <RadioGroupItem value={option.value} />
+              {option.label}
+            </Label>
+          ))}
+        </RadioGroup>
+      </div>
+    );
+  }
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
@@ -506,4 +525,9 @@ function LoggedRead({
       <Refusal message={refusal} />
     </div>
   );
+}
+
+/** A decision's fields as they start: each with the value the item gives it. */
+function defaultsOf(decision: { fields: { key: string; value: string }[] } | null | undefined) {
+  return Object.fromEntries((decision?.fields ?? []).map((field) => [field.key, field.value]));
 }

@@ -21,7 +21,7 @@ import { sendDueBatch } from "../matches/batches";
 import { isSuspended, suspendedNow, suspendedRefusal } from "../standing";
 import { emailTells } from "../tells";
 import { engagementAsArtisan, engagementAsClient, notHiredPayments } from "../engagements/views";
-import { expiryClocks } from "./expiry";
+import { jobExpiryClocks } from "./expiry";
 import { hireAgainDraft, hireAgainProblem, hireAgainView, hireAgainWrites } from "./hire-again";
 import { heldJob, holdWrites, refusalOf, stillDraft, withdrawHeldJob } from "./held";
 import {
@@ -41,6 +41,7 @@ import {
   jobRow,
   jobsOf,
   jobText,
+  noJob,
   openWrites,
   photoView,
   type JobPhoto,
@@ -63,7 +64,7 @@ type PhotosInput = { keep?: string[]; add?: Blob[] };
 export const jobsSection = defineSection({
   name: "jobs",
   queueItems: [heldJob, heldJobEdit],
-  clocks: expiryClocks,
+  clocks: jobExpiryClocks,
   api: (ctx) => ({
     /**
      * Saves a new Draft, or the Client's Draft by id, whole: anything may be
@@ -152,6 +153,7 @@ export const jobsSection = defineSection({
         text: jobText(job),
         files: job.photos,
         context: { kind: "before-payment" },
+        refusedOn: { accountId: job.clientId, jobId: job.id, what: "The Job" },
       });
       if (!checked.ok) return checked;
       const verdict = checked.value;
@@ -227,6 +229,7 @@ export const jobsSection = defineSection({
           text: jobText(fields),
           files: added,
           context: { kind: "before-payment" },
+          refusedOn: { accountId: job.clientId, jobId: job.id, what: "An edit of the Job" },
         });
         if (!checked.ok) {
           await discardFiles(ctx, added);
@@ -374,6 +377,7 @@ export const jobsSection = defineSection({
         region: row.regionName,
         updatedAt: row.updatedAt,
         expiresAt: row.expiresAt,
+        sentQuotes: row.sentQuotes,
       }));
       return {
         needsYou: summaries.filter((job) => groupOf(job) === "needsYou"),
@@ -543,10 +547,13 @@ const FIX_HELD_FOR =
  */
 async function heldOnJob(ctx: Context, job: JobRow, artisan: { accountId: string }) {
   if (job.state !== "open" || job.outOfViewSince) return null;
-  const [match, invitation] = await Promise.all([
+  const [held, invitation, suspended] = await Promise.all([
     heldMatch(ctx, job.id, artisan.accountId),
     heldInvitation(ctx, job.id, artisan.accountId),
+    isSuspended(ctx, artisan.accountId),
   ]);
+  // A Suspended Artisan keeps no Job Match (GLOSSARY.md); Quoting refuses it as Suspended.
+  const match = suspended ? null : held;
   if (!match && !invitation) return null;
   return { offeredAt: match?.offeredAt ?? null, invitedAt: invitation?.invitedAt ?? null };
 }
@@ -588,11 +595,21 @@ const GROUPS: Record<JobState, "needsYou" | "inProgress" | "finished"> = {
   closed: "finished",
 };
 
-/** Where a Job sits in My Jobs: a Hired one is Finished once its Engagement is Completed or Cancelled. */
-function groupOf(job: { state: JobState; engagementState: EngagementState | null }) {
-  return job.engagementState === "completed" || job.engagementState === "cancelled"
-    ? "finished"
-    : GROUPS[job.state];
+/**
+ * Where a Job sits in My Jobs (#111 story 67): it needs its Client while a
+ * Draft, while Open with a Quote Sent to Hire or Decline, and while its work
+ * awaits Approval; a Hired one is Finished once its Engagement is Completed
+ * or Cancelled.
+ */
+function groupOf(job: {
+  state: JobState;
+  engagementState: EngagementState | null;
+  sentQuotes: number;
+}) {
+  if (job.engagementState === "completed" || job.engagementState === "cancelled") return "finished";
+  if (job.engagementState === "awaiting-approval") return "needsYou";
+  if (job.state === "open" && job.sentQuotes > 0) return "needsYou";
+  return GROUPS[job.state];
 }
 
 function notOpen() {
@@ -628,10 +645,6 @@ function editBeingChecked() {
 
 function isEditable(state: JobState) {
   return (EDITABLE_STATES as readonly JobState[]).includes(state);
-}
-
-function noJob() {
-  return refuse("not-found", "That Job does not exist.");
 }
 
 /** What a Job would need from the Client, an incomplete Draft's or an edit's; null if nothing. */

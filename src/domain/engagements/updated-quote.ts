@@ -21,6 +21,7 @@ import {
   updatedQuotes,
   type ENGAGEMENT_STATES,
 } from "../schema";
+import { recordSighting, type Seen } from "../signals";
 import { emailTells, tellWhile, tellWithEmailWhile } from "../tells";
 import { heldCompletionOf } from "./completion";
 import { updatedQuoteFields, type UpdatedQuoteFields } from "./inputs";
@@ -31,7 +32,7 @@ import {
   refundWhole,
   type PaymentRow,
 } from "./payments-in";
-import { engagementRow, type EngagementRow } from "./rows";
+import { engagementRow, type EngagementRow, engagementNotFound } from "./rows";
 import {
   isBeforeCompletion,
   priceNow,
@@ -65,7 +66,7 @@ export async function proposeUpdatedQuote(
 ) {
   const engagement = await engagementRow(ctx, input.engagementId);
   if (actor.kind !== "artisan" || !engagement || engagement.artisanId !== actor.accountId) {
-    return refuse("not-found", "That Engagement does not exist.");
+    return engagementNotFound();
   }
   const parsed = updatedQuoteFields.safeParse({
     labour: input.labour,
@@ -193,7 +194,7 @@ export async function rejectUpdatedQuote(
 export async function acceptUpdatedQuote(
   ctx: Context,
   actor: Actor,
-  input: { updatedQuoteId: string; feeAcknowledged: boolean },
+  input: { updatedQuoteId: string; feeAcknowledged: boolean } & Seen,
 ) {
   const found = await withEngagement(ctx, input.updatedQuoteId);
   if (actor.kind !== "client" || !found || found.engagement.clientId !== actor.accountId) {
@@ -228,6 +229,7 @@ export async function acceptUpdatedQuote(
   };
   // Written first, so its event always finds it.
   await ctx.db.insert(payments).values(payment);
+  await recordSighting(ctx, engagement.clientId, input, "payment");
   return ok({ checkoutUrl: await openCollection(ctx, payment) });
 }
 

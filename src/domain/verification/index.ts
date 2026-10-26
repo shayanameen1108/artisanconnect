@@ -1,4 +1,16 @@
-import { and, asc, eq, inArray, isNull, ne, notExists, type SQLWrapper } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  exists,
+  inArray,
+  isNull,
+  ne,
+  notExists,
+  or,
+  sql,
+  type SQLWrapper,
+} from "drizzle-orm";
 import type { Actor, AdminActor } from "../actor";
 import { firstProblem } from "../accounts/inputs";
 import { publicName } from "../accounts/names";
@@ -17,6 +29,7 @@ import {
   SERVICE_CATEGORY_NAMES,
   type ServiceCategory,
 } from "../service-categories";
+import { payoutAccountSignalWrites } from "../signals";
 import { tell } from "../tells";
 import { discardFiles, uploadFile, UPLOAD_CONTEXTS } from "../uploads";
 import {
@@ -46,7 +59,7 @@ import type { CheckDetails, CheckFile } from "./stored";
 // touches a Hired Engagement.
 
 /** Each part of a check's files, as the Artisan sends them. */
-export type CheckFiles = Partial<Record<FilePart["part"], Blob[]>>;
+type CheckFiles = Partial<Record<FilePart["part"], Blob[]>>;
 
 const KIND = "verification.checks";
 
@@ -156,8 +169,28 @@ const verificationItem = defineQueueItemKind(KIND, {
         case "accept": {
           const accepted = await acceptance(ctx, check, choice.fields);
           if (!accepted.ok) return accepted;
+          // A Payout account in the name of a Client they transact with is a Signal (#140).
+          const signalled =
+            check.kind === "payout-account" && check.details.accountHolder
+              ? await payoutAccountSignalWrites(
+                  ctx,
+                  check.artisanId,
+                  check.details.accountHolder,
+                  exists(
+                    ctx.db
+                      .select({ one: sql`1` })
+                      .from(verificationChecks)
+                      .where(
+                        and(
+                          eq(verificationChecks.id, check.id),
+                          eq(verificationChecks.state, "accepted"),
+                        ),
+                      ),
+                  ),
+                )
+              : [];
           return ok({
-            writes: acceptWrites(ctx, admin, check, accepted.value),
+            writes: [...acceptWrites(ctx, admin, check, accepted.value), ...signalled],
             summary: `Accepted ${about}`,
           });
         }
@@ -453,6 +486,20 @@ export async function verifiedCategoriesOf(
   ctx: Context,
   artisanIds: SQLWrapper | string[],
 ): Promise<Map<string, { category: ServiceCategory; gasWork: boolean }[]>> {
+  const standings = await acceptedStandingsOf(ctx, artisanIds);
+  return new Map(
+    [...standings].map(([artisanId, standing]) => [artisanId, standing.verifiedCategories()]),
+  );
+}
+
+/**
+ * Each Artisan's Standing from their accepted checks only, by id: enough for
+ * what is current now, which is all Browse and badges read.
+ */
+async function acceptedStandingsOf(
+  ctx: Context,
+  artisanIds: SQLWrapper | string[],
+): Promise<Map<string, Standing>> {
   const rows = await ctx.db
     .select()
     .from(verificationChecks)
@@ -467,10 +514,7 @@ export async function verifiedCategoriesOf(
     byArtisan.set(row.artisanId, [...(byArtisan.get(row.artisanId) ?? []), row]);
   const today = saDay(ctx.now());
   return new Map(
-    [...byArtisan].map(([artisanId, checks]) => [
-      artisanId,
-      new Standing(checks, today).verifiedCategories(),
-    ]),
+    [...byArtisan].map(([artisanId, checks]) => [artisanId, new Standing(checks, today)]),
   );
 }
 
@@ -486,7 +530,16 @@ const UNSHOWN_BADGES: readonly CheckKind[] = ["work-permit", "payout-account"];
  * document's expiry date.
  */
 export async function badgesOf(ctx: Context, artisanId: string) {
-  const standing = await standingOf(ctx, artisanId);
+  return badgesFrom(await standingOf(ctx, artisanId));
+}
+
+/** Each Artisan's Verification Badges, by id, for a list of them; none for an Artisan with none. */
+export async function badgesOfEach(ctx: Context, artisanIds: SQLWrapper | string[]) {
+  const standings = await acceptedStandingsOf(ctx, artisanIds);
+  return { get: (id: string) => (standings.has(id) ? badgesFrom(standings.get(id)!) : []) };
+}
+
+function badgesFrom(standing: Standing) {
   return allSlots().flatMap(({ slot, kind, category }) => {
     const current = standing.current(slot);
     if (!current || UNSHOWN_BADGES.includes(kind)) return [];
@@ -613,7 +666,13 @@ function checkDates(dates: { expiresOn: string | null; issuedOn: string | null }
   return null;
 }
 
-/** Whether another Artisan holds this Identity Number or Payout account: has it accepted now. */
+/**
+ * Whether another Artisan holds this Identity Number or Payout account. A
+ * Payout account is held while accepted; an Identity Number from its first
+ * acceptance on, replaced or removed, so it never holds a second Artisan
+ * Account (ADR 0021). The trigger `verification_checks_one_holder`
+ * (migrations/0036) refuses the same at acceptance.
+ */
 async function heldByOther(ctx: Context, heldKey: string, artisanId: string) {
   const [held] = await ctx.db
     .select({ id: verificationChecks.id })
@@ -622,7 +681,13 @@ async function heldByOther(ctx: Context, heldKey: string, artisanId: string) {
       and(
         eq(verificationChecks.heldKey, heldKey),
         ne(verificationChecks.artisanId, artisanId),
-        eq(verificationChecks.state, "accepted"),
+        or(
+          eq(verificationChecks.state, "accepted"),
+          and(
+            eq(verificationChecks.kind, "identity"),
+            inArray(verificationChecks.state, ["superseded", "removed"]),
+          ),
+        ),
       ),
     )
     .limit(1);
@@ -991,6 +1056,24 @@ async function checksOf(ctx: Context, artisanId: string): Promise<CheckRow[]> {
 /** The Artisan's current Payout account, which Payouts are sent to; null if they have none. */
 export async function currentPayoutAccount(ctx: Context, artisanId: string) {
   return (await standingOf(ctx, artisanId)).current("payout-account");
+}
+
+/**
+ * What an Artisan's settings show of its Verification (#141): its Identity
+ * Number, read only, which it keeps while Closed, and the Payout account
+ * Payouts go to now, with only the end of its number.
+ */
+export async function verificationSettingsOf(ctx: Context, artisanId: string) {
+  const standing = await standingOf(ctx, artisanId);
+  const identity = standing.accepted("identity");
+  const payout = standing.current("payout-account");
+  return {
+    identityNumber: identity ? formatIdentityNumber(identityOf(identity.details)) : null,
+    payoutAccount: payout && {
+      bank: payout.details.bank ?? "",
+      accountEnding: (payout.details.accountNumber ?? "").slice(-4),
+    },
+  };
 }
 
 async function standingOf(ctx: Context, artisanId: string): Promise<Standing> {

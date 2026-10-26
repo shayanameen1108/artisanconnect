@@ -1,9 +1,10 @@
+import { ScrollText } from "lucide-react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { buttonVariants } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Page } from "@/components/page";
+import { DataTable, type DataColumn } from "@/components/data-table";
+import { EmptyState, Page } from "@/components/page";
 import { getAuditLog } from "@/web/admin";
-import { copy, formatDate } from "@/web/copy";
+import { copy, formatDate, pageTitle } from "@/web/copy";
 import { onlyForAdmins } from "@/web/guards";
 
 export const Route = createFileRoute("/admin/audit")({
@@ -14,34 +15,53 @@ export const Route = createFileRoute("/admin/audit")({
   },
   loaderDeps: ({ search }) => search,
   loader: ({ deps }) => getAuditLog({ data: deps }),
+  head: () => ({ meta: [{ title: pageTitle(t.title) }] }),
   component: AuditLog,
 });
 
 const t = copy.admin.audit;
 
+type Entry = Awaited<ReturnType<typeof getAuditLog>>["rows"][number];
+
+const columns: DataColumn<Entry>[] = [
+  {
+    id: "at",
+    header: t.at,
+    enableSorting: false,
+    cell: ({ row }) => (
+      <time className="whitespace-normal text-muted-foreground tabular-nums">
+        {formatDate(row.original.at)}
+      </time>
+    ),
+  },
+  {
+    id: "who",
+    header: t.who,
+    enableSorting: false,
+    // Every cell wraps, so the log fits a phone and needs no sideways scroll.
+    cell: ({ row }) => (
+      <span className="break-all whitespace-normal">{row.original.admin ?? t.system}</span>
+    ),
+  },
+  {
+    id: "what",
+    header: t.what,
+    enableSorting: false,
+    cell: ({ row }) => <span className="whitespace-normal">{row.original.summary}</span>,
+  },
+];
+
 /** Every Admin decision and every logged read: who, what, and when, newest first. */
 function AuditLog() {
   const { rows, next } = Route.useLoaderData();
   return (
-    <Page title={t.title}>
-      <p className="max-w-2xl text-sm text-muted-foreground">{t.lead}</p>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t.empty}</p>
-      ) : (
-        <Card className="py-0">
-          <ol className="divide-y">
-            {rows.map((row) => (
-              <li key={row.id} className="grid gap-1 p-4 sm:grid-cols-[11rem_14rem_1fr] sm:gap-4">
-                <time className="text-xs text-muted-foreground tabular-nums sm:text-sm">
-                  {formatDate(row.at)}
-                </time>
-                <span className="truncate text-sm font-medium">{row.admin ?? t.system}</span>
-                <span className="text-sm">{row.summary}</span>
-              </li>
-            ))}
-          </ol>
-        </Card>
-      )}
+    <Page title={t.title} lead={t.lead}>
+      <DataTable
+        label={t.table}
+        columns={columns}
+        data={rows}
+        empty={<EmptyState icon={<ScrollText />}>{t.empty}</EmptyState>}
+      />
       {next && (
         <Link
           to="/admin/audit"

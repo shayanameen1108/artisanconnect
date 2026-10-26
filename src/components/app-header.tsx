@@ -1,29 +1,33 @@
-import { Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { Bell, Hammer } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Bell, Menu, Monitor, Moon, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { signOut } from "@/web/accounts";
-import type { AdminMe, Me } from "@/web/me";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { SiteSearch } from "@/components/site-search";
+import { Wordmark } from "@/components/wordmark";
+import { SERVICE_CATEGORIES, SERVICE_CATEGORY_NAMES } from "@/domain/service-categories";
+import type { Me } from "@/web/me";
 import { copy } from "@/web/copy";
 
-type NavItem = { to: string; label: string };
+/** A page in the header; `cta` draws it as an outlined button, as a Visitor's Sign up is. */
+type NavItem = { to: string; label: string; cta?: boolean };
 
-function navFor(me: Me | null, admin: AdminMe | null): NavItem[] {
-  if (admin) {
-    const t = copy.header.admin;
-    return [
-      { to: "/admin", label: t.queues },
-      { to: "/admin/people", label: t.people },
-      { to: "/admin/payouts", label: t.payouts },
-      { to: "/admin/admins", label: t.admins },
-      { to: "/admin/audit", label: t.audit },
-    ];
-  }
+/** Each party's header, as #111 names it. */
+function navFor(me: Me | null): NavItem[] {
   if (!me) {
     const t = copy.header.visitor;
     return [
       { to: "/artisans", label: t.findArtisans },
-      { to: "/sign-up", label: t.signUp },
+      { to: "/sign-up", label: t.signUp, cta: true },
       { to: "/sign-in", label: t.signIn },
     ];
   }
@@ -44,6 +48,9 @@ function navFor(me: Me | null, admin: AdminMe | null): NavItem[] {
   ];
 }
 
+/** How many unread Notices the bell's badge shows: up to 9, then "9+". */
+const badge = (unread: number) => (unread > 9 ? "9+" : String(unread));
+
 export function initials(name: string) {
   return name
     .split(/\s+/)
@@ -53,65 +60,182 @@ export function initials(name: string) {
     .toUpperCase();
 }
 
-/** The header in the Contract look (#107): Visitor, Client, Artisan, or Admin. */
-export function AppHeader({ me, admin }: { me: Me | null; admin: AdminMe | null }) {
+const navLink =
+  "rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground";
+const navActive = { className: "text-foreground bg-muted" };
+
+/**
+ * The one header of a Visitor, a Client, or an Artisan (#107). A Visitor's
+ * and a Client's search first, with the eight trades under it, as large
+ * South African shops head their pages. The Admin's is its sidebar.
+ */
+export function AppHeader({ me, unread = 0 }: { me: Me | null; unread?: number }) {
+  const nav = navFor(me);
+  const finding = me?.kind !== "artisan";
   return (
-    <header className="border-b bg-background">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:gap-6">
-        <Link to="/" className="inline-flex shrink-0 items-center gap-2 font-semibold">
-          <Hammer className="size-5" />
-          <span className="hidden sm:inline">{copy.appName}</span>
+    <header className="sticky top-0 z-40 border-b bg-background">
+      <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:px-6">
+        <MobileNav nav={nav} trades={finding} />
+        <Link to="/" aria-label={copy.appName} className="mr-4 shrink-0 rounded-md">
+          <Wordmark />
         </Link>
-        <nav className="flex min-w-0 gap-4 overflow-x-auto text-sm sm:gap-5" aria-label="Main">
-          {navFor(me, admin).map((item) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              activeOptions={{ exact: item.to === "/admin" }}
-              className="shrink-0 text-muted-foreground hover:text-foreground"
-              activeProps={{ className: "text-foreground font-medium" }}
-            >
-              {item.label}
-            </Link>
-          ))}
+        {finding && <SiteSearch className="hidden w-full max-w-xl md:flex" />}
+        <nav aria-label={copy.header.main} className="ml-auto hidden items-center gap-1 md:flex">
+          {nav.map((item) =>
+            item.cta ? (
+              <Link
+                key={item.to}
+                to={item.to}
+                className={buttonVariants({ variant: "outline", className: "mx-1" })}
+              >
+                {item.label}
+              </Link>
+            ) : (
+              <Link key={item.to} to={item.to} className={navLink} activeProps={navActive}>
+                {item.label}
+              </Link>
+            ),
+          )}
         </nav>
-        {admin && <AdminCorner admin={admin} />}
-        {me && (
-          <div className="ml-auto flex shrink-0 items-center gap-3">
-            <Link to="/notices" aria-label={copy.header.notices} className="text-muted-foreground">
-              <Bell className="size-4" />
+        <div className="ml-auto flex items-center gap-1 md:ml-2">
+          {me && (
+            <Link
+              to="/notices"
+              // The name holds the badge's own text, so it matches what is seen (WCAG 2.5.3).
+              aria-label={
+                unread > 0 ? copy.header.noticesUnread(badge(unread)) : copy.header.notices
+              }
+              className={buttonVariants({ variant: "ghost", size: "icon", className: "relative" })}
+              activeProps={{ className: "bg-muted" }}
+            >
+              <Bell />
+              {unread > 0 && (
+                <Badge className="absolute -top-1 -right-1 h-4 min-w-4 px-1 tabular-nums">
+                  {badge(unread)}
+                </Badge>
+              )}
             </Link>
-            <Link to="/account" aria-label={copy.header.client.account}>
+          )}
+          {!me && (
+            // On a phone the pages are in the menu, but signing in stays one tap away.
+            <Link
+              to="/sign-in"
+              className={buttonVariants({ variant: "ghost", className: "md:hidden" })}
+            >
+              {copy.header.visitor.signIn}
+            </Link>
+          )}
+          <ThemeMenu />
+          {me && (
+            <Link
+              to="/account"
+              aria-label={copy.header.accountOf(initials(me.publicName))}
+              className="rounded-full"
+            >
               <Avatar size="sm">
                 <AvatarFallback>{initials(me.publicName)}</AvatarFallback>
               </Avatar>
             </Link>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+      {finding && (
+        <>
+          <div className="border-t px-4 py-2 md:hidden">
+            <SiteSearch className="w-full" />
+          </div>
+          <nav aria-label={copy.header.trades} className="hidden border-t bg-card md:block">
+            <ul className="mx-auto flex max-w-7xl overflow-x-auto px-2 sm:px-4">
+              {SERVICE_CATEGORIES.map((category) => (
+                <li key={category}>
+                  <Link
+                    to="/artisans"
+                    search={{ category }}
+                    className="block px-3 py-2 text-sm whitespace-nowrap text-muted-foreground hover:text-foreground"
+                    activeProps={{ className: "text-foreground font-medium" }}
+                  >
+                    {SERVICE_CATEGORY_NAMES[category]}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </>
+      )}
     </header>
   );
 }
 
-function AdminCorner({ admin }: { admin: AdminMe }) {
-  const router = useRouter();
-  const navigate = useNavigate();
+/** The pages, and for a Visitor or a Client the trades, in a sheet from the left on a phone. */
+function MobileNav({ nav, trades }: { nav: NavItem[]; trades: boolean }) {
   return (
-    <div className="ml-auto flex shrink-0 items-center gap-3">
-      <Avatar size="sm" aria-label={admin.email} title={admin.email}>
-        <AvatarFallback>{initials(admin.email)}</AvatarFallback>
-      </Avatar>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={async () => {
-          await signOut();
-          await router.invalidate();
-          await navigate({ to: "/admin/sign-in" });
-        }}
+    <Sheet>
+      <SheetTrigger
+        render={
+          <Button variant="ghost" size="icon" className="md:hidden" aria-label={copy.header.menu} />
+        }
       >
-        {copy.header.admin.signOut}
-      </Button>
-    </div>
+        <Menu />
+      </SheetTrigger>
+      <SheetContent side="left" className="w-72 overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>
+            <Wordmark />
+          </SheetTitle>
+        </SheetHeader>
+        <nav aria-label={copy.header.menu} className="grid gap-1 px-4">
+          {nav.map((item) => (
+            <Link key={item.to} to={item.to} className={navLink} activeProps={navActive}>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+        {trades && (
+          <nav aria-label={copy.header.trades} className="grid gap-1 border-t px-4 pt-4">
+            {SERVICE_CATEGORIES.map((category) => (
+              <Link
+                key={category}
+                to="/artisans"
+                search={{ category }}
+                className={navLink}
+                activeProps={navActive}
+              >
+                {SERVICE_CATEGORY_NAMES[category]}
+              </Link>
+            ))}
+          </nav>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** Light, dark, or as the device is. */
+export function ThemeMenu() {
+  const { theme, setTheme } = useTheme();
+  const t = copy.header.theme;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t.label} />}>
+        <Sun className="dark:hidden" />
+        <Moon className="hidden dark:block" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={setTheme}>
+          <DropdownMenuRadioItem value="light">
+            <Sun />
+            {t.light}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="dark">
+            <Moon />
+            {t.dark}
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="system">
+            <Monitor />
+            {t.system}
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

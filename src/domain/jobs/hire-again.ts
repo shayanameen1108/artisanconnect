@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import { engagementNotFound } from "../engagements/rows";
 import type { Actor } from "../actor";
 import { publicName } from "../accounts/names";
 import type { Context } from "../context";
@@ -6,6 +7,7 @@ import { invitable, invitationWrites } from "../invitations";
 import { ok, refuse } from "../result";
 import { accounts, chargebacks, engagements, jobs } from "../schema";
 import { SERVICE_CATEGORY_NAMES } from "../service-categories";
+import { closedState } from "../accounts/closing";
 import { isSuspended } from "../standing";
 import { jobRow, type JobRow } from "./rows";
 
@@ -20,7 +22,7 @@ import { jobRow, type JobRow } from "./rows";
  * no photos, for the Client to add. One already a Draft is opened again.
  */
 export async function hireAgainDraft(ctx: Context, actor: Actor, engagementId: string) {
-  if (actor.kind !== "client") return noEngagement();
+  if (actor.kind !== "client") return engagementNotFound();
   const [[engagement], [chargeback]] = await Promise.all([
     ctx.db
       .select({
@@ -36,7 +38,7 @@ export async function hireAgainDraft(ctx: Context, actor: Actor, engagementId: s
       .where(eq(chargebacks.engagementId, engagementId))
       .limit(1),
   ]);
-  if (!engagement || engagement.clientId !== actor.accountId) return noEngagement();
+  if (!engagement || engagement.clientId !== actor.accountId) return engagementNotFound();
   // One with a Chargeback would leave the Artisan Fee at 10% (#137).
   if (engagement.state !== "completed" || chargeback) {
     return refuse("not-completed", "Hire Again is offered once the Engagement is Completed.");
@@ -82,7 +84,9 @@ export async function hireAgainProblem(ctx: Context, job: JobRow): Promise<strin
   const [listed] = await invitable(ctx, job, { artisanId });
   if (listed) return null;
   const name = (await shownArtisanName(ctx, artisanId)) ?? "The Artisan";
-  if (await isSuspended(ctx, artisanId)) return `${name} cannot be invited to a Job now.`;
+  if ((await isSuspended(ctx, artisanId)) || (await closedState(ctx, artisanId))?.closedAt) {
+    return `${name} cannot be invited to a Job now.`;
+  }
   const category = SERVICE_CATEGORY_NAMES[job.category];
   if (job.gasWork) {
     const [withoutGas] = await invitable(ctx, { ...job, gasWork: false }, { artisanId });
@@ -128,8 +132,4 @@ async function shownArtisanName(ctx: Context, artisanId: string) {
     .from(accounts)
     .where(eq(accounts.id, artisanId));
   return artisan?.namesShown ? publicName(artisan) : null;
-}
-
-function noEngagement() {
-  return refuse("not-found", "That Engagement does not exist.");
 }

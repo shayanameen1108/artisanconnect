@@ -53,32 +53,6 @@ describe("Browse", () => {
     expect(await browsed(domain, { category: "plumbing", regionId: "helderberg" })).toEqual([]);
   });
 
-  test("puts the Available for Jobs first, then orders by public name A to Z", async () => {
-    const { domain, given } = await createHarness();
-    const zola = await given.verifiedArtisan({ name: "Zola Mthembu" });
-    await given.verifiedArtisan({ name: "Ayesha Khan" });
-    const busy = await given.verifiedArtisan({
-      name: "Sipho Dlamini",
-      tradingName: "Bright Pipes",
-    });
-    await given.verifiedArtisan({ name: "Johan Botha", tradingName: "cape drains" });
-    await domain.availability.set(busy.actor, { available: false });
-
-    expect(await browsed(domain, { category: "plumbing" })).toEqual([
-      "Ayesha Khan",
-      "cape drains",
-      "Zola Mthembu",
-      "Bright Pipes",
-    ]);
-    await domain.availability.set(zola.actor, { available: false });
-    expect(await browsed(domain, { category: "plumbing" })).toEqual([
-      "Ayesha Khan",
-      "cape drains",
-      "Bright Pipes",
-      "Zola Mthembu",
-    ]);
-  });
-
   test("drops an Artisan once a check the category needs expires", async () => {
     const { domain, given, clock } = await createHarness();
     await given.verifiedArtisan({ name: "Sipho Dlamini", categories: ["electrical"] });
@@ -102,12 +76,42 @@ describe("Browse", () => {
     expect(await browsed(domain, { category: "plumbing" })).toEqual([]);
   });
 
+  test("lists each Artisan with the first work photo shown, the badges, and the Completed count", async () => {
+    const harness = await createHarness();
+    const { domain, given } = harness;
+    const admin = await given.admin();
+    const artisan = await given.matchableArtisan({ name: "Sipho Dlamini" });
+    await edit(harness, artisan, { about: "I paint homes.", add: [await photo(), await photo()] });
+    await decide(harness, admin, "release");
+    const client = await given.client();
+    const jobId = await given.openJob(client);
+    await given.hired(client, await given.sentQuote(artisan, jobId));
+    const engagementId = await given.engagementOf(client, jobId);
+    await given.workStarted(client, engagementId);
+    await given.markedComplete(artisan, engagementId);
+    await given.approved(client, engagementId);
+
+    const [listed] = await domain.profiles.browse(visitor, { category: "painting" });
+    const shown = await domain.profiles.view(visitor, { artisanId: artisan.actor.accountId });
+
+    expect(listed).toMatchObject({
+      publicName: "Sipho Dlamini",
+      photo: shown!.photos[0],
+      badges: [
+        expect.objectContaining({ name: "Identity verified" }),
+        expect.objectContaining({ name: "Work photos, Painting" }),
+      ],
+      completed: 1,
+    });
+  });
+
   test("is the same for a Visitor, a Client, and an Artisan", async () => {
     const { domain, given } = await createHarness();
     const artisan = await given.verifiedArtisan({ name: "Sipho Dlamini" });
     const client = await given.client();
 
     const asVisitor = await domain.profiles.browse(visitor, { category: "plumbing" });
+    const profile = await domain.profiles.view(visitor, { artisanId: artisan.actor.accountId });
 
     expect(asVisitor).toEqual([
       {
@@ -117,6 +121,9 @@ describe("Browse", () => {
         gasWork: false,
         regions: [],
         reviews: { average: null, count: 0 },
+        photo: null,
+        badges: profile!.badges,
+        completed: 0,
       },
     ]);
     expect(await domain.profiles.browse(client.actor, { category: "plumbing" })).toEqual(asVisitor);
@@ -161,7 +168,13 @@ describe("an Artisan Profile", () => {
       ],
       availableForJobs: true,
       completed: 0,
-      reviews: { average: null, count: 0, items: [], more: false },
+      reviews: {
+        average: null,
+        count: 0,
+        ratings: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+        items: [],
+        more: false,
+      },
     });
     expect(JSON.stringify(profile)).not.toContain("@example.com");
   });

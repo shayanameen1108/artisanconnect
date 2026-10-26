@@ -10,12 +10,12 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { initials } from "@/components/app-header";
-import { NoticeList } from "@/components/notice-list";
-import { NextStepCard, Page, Refusal } from "@/components/page";
+import { NoticeList, useNoticesSeen } from "@/components/notice-list";
+import { EmptyState, NextStepCard, Page, Refusal, withSidebar } from "@/components/page";
 import { REGIONS_MAX } from "@/domain/regions/places";
 import { formatRands } from "@/domain/money";
 import { getNotices } from "@/web/accounts";
-import { copy, formatDate } from "@/web/copy";
+import { copy, formatDate, pageTitle } from "@/web/copy";
 import { onlyFor } from "@/web/guards";
 import { passInvitation } from "@/web/invitations";
 import { passMatch } from "@/web/matches";
@@ -30,6 +30,7 @@ export const Route = createFileRoute("/home")({
     const [notices, work, payouts] = await Promise.all([getNotices(), getMyWork(), getMyPayouts()]);
     return { notices, work, payouts };
   },
+  head: () => ({ meta: [{ title: pageTitle(t.title) }] }),
   component: Home,
 });
 
@@ -51,9 +52,10 @@ type Result = { ok: true } | { ok: false; refusal: { message: string } };
 function Home() {
   const { notices, work, payouts } = Route.useLoaderData();
   const [tab, setTab] = useState<Tab>("matches");
+  const fresh = useNoticesSeen(tab === "notices");
   return (
-    <Page>
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+    <Page title={t.title}>
+      <div className={withSidebar}>
         <div className="min-w-0 space-y-6">
           <Waiting work={work} onSee={setTab} />
           <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
@@ -75,7 +77,7 @@ function Home() {
               <Active quotes={work.quotes} />
             </TabsContent>
             <TabsContent value="notices" className="pt-4">
-              <NoticeList notices={notices} />
+              <NoticeList notices={notices} fresh={fresh} />
             </TabsContent>
           </Tabs>
         </div>
@@ -90,57 +92,75 @@ function Home() {
 }
 
 /**
- * What waits on the Artisan, first things first: Verification, Regions, then
- * Invitations and Job Matches. An Invitation may come before the rest is done.
+ * What waits on the Artisan, in one card: the first of Hired work to start,
+ * complete, or fix, then Verification, Regions, Invitations, and Job Matches.
  */
 function Waiting({ work, onSee }: { work: Work; onSee: (tab: Tab) => void }) {
   const { invitations, matches } = work;
   const jobs = invitations.length > 0 || matches.length > 0;
+  const hired = work.quotes.filter((quote) => quote.waitsOnArtisan).length;
   const cards = [
-    !work.verified && (
-      <NextStepCard key="verification" label={t.waiting} title={t.verification}>
-        <p className="text-sm text-muted-foreground">{t.verificationLead}</p>
-        <Link to="/verification" className={buttonVariants({ size: "lg" })}>
-          {t.open}
-        </Link>
-      </NextStepCard>
-    ),
-    work.regions.length === 0 && (
-      <NextStepCard key="regions" label={t.waiting} title={t.chooseYourRegions}>
-        <p className="text-sm text-muted-foreground">{t.chooseRegionsLead}</p>
-        <Link to="/regions" className={buttonVariants({ size: "lg" })}>
-          {t.chooseRegions}
-        </Link>
-      </NextStepCard>
-    ),
-    jobs && (
-      <NextStepCard
-        key="jobs"
-        label={t.waiting}
-        title={t.jobsWaiting(invitations.length, matches.length)}
-      >
-        <p className="text-sm text-muted-foreground">
-          {invitations.length > 0 ? t.invitationsLead : t.matchesLead}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {invitations.length > 0 && (
-            <Button size="lg" onClick={() => onSee("invitations")}>
-              {t.seeInvitations}
-            </Button>
-          )}
-          {matches.length > 0 && (
-            <Button
-              size="lg"
-              variant={invitations.length > 0 ? "outline" : "default"}
-              onClick={() => onSee("matches")}
-            >
-              {t.seeMatches}
-            </Button>
-          )}
-        </div>
-      </NextStepCard>
-    ),
-  ].filter(Boolean);
+    hired > 0 && {
+      label: t.more.hired,
+      card: (
+        <NextStepCard key="hired" label={t.waiting} title={t.hiredWaiting(hired)}>
+          <p className="text-sm text-muted-foreground">{t.hiredLead}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => onSee("active")}>{t.seeActive}</Button>
+          </div>
+        </NextStepCard>
+      ),
+    },
+    !work.verified && {
+      label: t.more.verification,
+      card: (
+        <NextStepCard key="verification" label={t.waiting} title={t.verification}>
+          <p className="text-sm text-muted-foreground">{t.verificationLead}</p>
+          <Link to="/verification" className={buttonVariants()}>
+            {t.open}
+          </Link>
+        </NextStepCard>
+      ),
+    },
+    work.regions.length === 0 && {
+      label: t.more.regions,
+      card: (
+        <NextStepCard key="regions" label={t.waiting} title={t.chooseYourRegions}>
+          <p className="text-sm text-muted-foreground">{t.chooseRegionsLead}</p>
+          <Link to="/regions" className={buttonVariants()}>
+            {t.chooseRegions}
+          </Link>
+        </NextStepCard>
+      ),
+    },
+    jobs && {
+      label: t.more.jobs,
+      card: (
+        <NextStepCard
+          key="jobs"
+          label={t.waiting}
+          title={t.jobsWaiting(invitations.length, matches.length)}
+        >
+          <p className="text-sm text-muted-foreground">
+            {invitations.length > 0 ? t.invitationsLead : t.matchesLead}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {invitations.length > 0 && (
+              <Button onClick={() => onSee("invitations")}>{t.seeInvitations}</Button>
+            )}
+            {matches.length > 0 && (
+              <Button
+                variant={invitations.length > 0 ? "outline" : "default"}
+                onClick={() => onSee("matches")}
+              >
+                {t.seeMatches}
+              </Button>
+            )}
+          </div>
+        </NextStepCard>
+      ),
+    },
+  ].filter((each) => each !== false);
   if (cards.length === 0) {
     return (
       <NextStepCard label={t.waiting} title={t.nothingWaiting}>
@@ -148,12 +168,22 @@ function Waiting({ work, onSee }: { work: Work; onSee: (tab: Tab) => void }) {
       </NextStepCard>
     );
   }
-  return <div className="space-y-4">{cards}</div>;
+  const [first, ...rest] = cards;
+  return (
+    <div className="space-y-2">
+      {first!.card}
+      {rest.length > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {t.moreWaiting(rest.map((each) => each.label))}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function Matches({ matches, available }: { matches: Match[]; available: boolean }) {
   if (matches.length === 0) {
-    return <Empty>{available ? t.noMatches : t.noMatchesUnavailable}</Empty>;
+    return <EmptyState>{available ? t.noMatches : t.noMatchesUnavailable}</EmptyState>;
   }
   return (
     <Card className="py-0">
@@ -172,7 +202,7 @@ function Matches({ matches, available }: { matches: Match[]; available: boolean 
 }
 
 function Invitations({ invitations }: { invitations: Invitation[] }) {
-  if (invitations.length === 0) return <Empty>{t.noInvitations}</Empty>;
+  if (invitations.length === 0) return <EmptyState>{t.noInvitations}</EmptyState>;
   return (
     <Card className="py-0">
       <ul className="divide-y">
@@ -194,7 +224,7 @@ function Invitations({ invitations }: { invitations: Invitation[] }) {
  * newest first; a Hired one shows where its Engagement stands.
  */
 function Active({ quotes }: { quotes: Quoted[] }) {
-  if (quotes.length === 0) return <Empty>{t.noActive}</Empty>;
+  if (quotes.length === 0) return <EmptyState>{t.noActive}</EmptyState>;
   return (
     <Card className="py-0">
       <ul className="divide-y">
@@ -209,7 +239,9 @@ function Active({ quotes }: { quotes: Quoted[] }) {
                 ? copy.engagement.states[quote.engagementState]
                 : copy.quote.states[quote.state]}
             </Badge>
-            <span className="self-center text-sm font-medium">{formatRands(quote.totalCents)}</span>
+            <span className="self-center text-sm font-medium tabular-nums">
+              {formatRands(quote.totalCents)}
+            </span>
           </JobListRow>
         ))}
       </ul>
@@ -270,7 +302,7 @@ function JobListRow({
           width={job.photo.width}
           height={job.photo.height}
           loading="lazy"
-          className="hidden aspect-[4/3] w-28 shrink-0 rounded-lg border object-cover sm:block"
+          className="hidden aspect-4/3 w-28 shrink-0 rounded-lg border object-cover sm:block"
         />
       )}
       <div className="min-w-0 flex-1 space-y-2">
@@ -284,7 +316,7 @@ function JobListRow({
         </Link>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1">
-            <MapPin className="size-3" />
+            <MapPin className="size-3" aria-hidden />
             {job.region}
           </span>
           <span>{job.category?.name}</span>
@@ -296,7 +328,7 @@ function JobListRow({
           <Link
             to="/jobs/$jobId"
             params={{ jobId: job.jobId }}
-            className={buttonVariants({ size: "sm" })}
+            className={buttonVariants({ size: "sm", variant: "outline" })}
           >
             {t.openJob}
           </Link>
@@ -304,16 +336,6 @@ function JobListRow({
         </div>
       </div>
     </li>
-  );
-}
-
-function Empty({ children }: { children: React.ReactNode }) {
-  return (
-    <Card>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">{children}</p>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -379,7 +401,7 @@ function ProfileCard({ work }: { work: Work }) {
           </div>
         </div>
         {work.profile && work.profile.badges.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {work.profile.badges.map((badge) => (
               <Badge key={`${badge.kind}:${badge.category ?? ""}`} variant="outline">
                 <ShieldCheck />
@@ -449,7 +471,7 @@ function RegionsCard({ regions }: { regions: Work["regions"] }) {
             </Link>
           </>
         ) : (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {regions.map((region) => (
               <Badge key={region.id} variant="secondary">
                 {region.name}

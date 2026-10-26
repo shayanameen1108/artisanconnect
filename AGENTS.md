@@ -10,4 +10,8 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Checks and review
+
+Every commit passes the checks CI runs (`README.md`, Scripts). Review applies `CODING_STANDARDS.md`, which holds only judgement calls; a rule a check can enforce becomes a check.

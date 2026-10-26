@@ -1,8 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { notFound } from "@tanstack/react-router";
 import { visitor } from "@/domain/actor";
+import type { FigurePeriod } from "@/domain/figures/periods";
 import type { QueueName } from "@/domain/queue-names";
-import { requestActor, requestDomain, requestIp, sendCookies, turnstileRefusal } from "./session";
+import {
+  requestActor,
+  requestDomain,
+  sendCookies,
+  turnstileRefusal,
+  floodRefusal,
+} from "./session";
 
 // The Admin's server functions: thin adapters onto the domain module, which
 // refuses anyone but an Admin (ADR 0017).
@@ -14,14 +21,15 @@ export const requestAdminCode = createServerFn({ method: "POST" })
     if (refused) return refused;
     return requestDomain().admins.requestSignInCode(visitor, {
       email: data.email,
-      ip: requestIp(),
     });
   });
 
 export const adminSignIn = createServerFn({ method: "POST" })
   .validator((input: { email: string; code: string }) => input)
   .handler(async ({ data }) => {
-    const signedIn = await requestDomain().admins.signIn(visitor, { ...data, ip: requestIp() });
+    const flood = await floodRefusal("code-entry");
+    if (flood) return flood;
+    const signedIn = await requestDomain().admins.signIn(visitor, data);
     if (!signedIn.ok) return signedIn;
     sendCookies(signedIn.value.cookies);
     return { ok: true as const, value: {} };
@@ -104,6 +112,42 @@ export const getAuditLog = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     const domain = requestDomain();
     return orNotFound(await domain.admins.auditLog(await requestActor(domain), data));
+  });
+
+/** How the marketplace is doing over a period, with no targets (#142). */
+export const getFigures = createServerFn({ method: "GET" })
+  .validator((input: { period?: FigurePeriod }) => input)
+  .handler(async ({ data }) => {
+    const domain = requestDomain();
+    return orNotFound(await domain.figures.read(await requestActor(domain), data));
+  });
+
+/** Every Region with its suburbs, for the Admin adding one (#142). */
+export const getAdminSuburbs = createServerFn({ method: "GET" }).handler(async () => {
+  const domain = requestDomain();
+  const actor = await requestActor(domain);
+  if (actor.kind !== "admin") throw notFound();
+  return domain.regions.all(actor);
+});
+
+export const addSuburb = createServerFn({ method: "POST" })
+  .validator((input: { name: string; regionId: string; despiteAlike?: boolean }) => input)
+  .handler(async ({ data }) => {
+    const domain = requestDomain();
+    return domain.regions.addSuburb(await requestActor(domain), data);
+  });
+
+/** Every Marketplace rules version, newest first, with the Accounts that accepted each last. */
+export const getRulesVersions = createServerFn({ method: "GET" }).handler(async () => {
+  const domain = requestDomain();
+  return orNotFound(await domain.marketplaceRules.versions(await requestActor(domain)));
+});
+
+export const publishRules = createServerFn({ method: "POST" })
+  .validator((input: { summary: string }) => input)
+  .handler(async ({ data }) => {
+    const domain = requestDomain();
+    return domain.marketplaceRules.publish(await requestActor(domain), data);
   });
 
 /** A projection the viewer may not see is a page that does not exist. */

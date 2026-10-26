@@ -26,6 +26,7 @@ import { refundWrites, sendEngagementRefunds } from "../refunds";
 import { ok, refuse } from "../result";
 import { formatTime } from "../sa-days";
 import { completions, disputes, engagements, queueItems, type DISPUTED_BY } from "../schema";
+import { signalIfDisputing } from "../signals";
 import { emailTells, tell, tellWhile } from "../tells";
 import {
   checkFileCount,
@@ -37,7 +38,7 @@ import {
 import { labourRefundAt } from "./cancellation";
 import { completionFilePath, completionsOf, unansweredOf } from "./completion";
 import { DISPUTE_REASON_MAX, labourAmount } from "./inputs";
-import { engagementRow, type EngagementRow } from "./rows";
+import { engagementRow, type EngagementRow, partyOf, engagementNotFound } from "./rows";
 import { endProposedWrite } from "./updated-quote";
 import { windowOpensWrites } from "../reviews/window";
 
@@ -54,12 +55,12 @@ import { windowOpensWrites } from "../reviews/window";
 // Cancelled again if the Dispute was against a Cancellation, otherwise
 // Completed.
 
-export type DisputeRow = typeof disputes.$inferSelect;
+type DisputeRow = typeof disputes.$inferSelect;
 type DisputedBy = (typeof DISPUTED_BY)[number];
 type Photo = Extract<StoredFile, { kind: "photo" }>;
 
 /** The path that serves a Dispute's photo, or its thumbnail. */
-export function disputeFilePath(disputeId: string, file: { id: string }, thumbnail = false) {
+function disputeFilePath(disputeId: string, file: { id: string }, thumbnail = false) {
   return `/dispute-files/${disputeId}/${file.id}${thumbnail ? "?size=thumbnail" : ""}`;
 }
 
@@ -79,7 +80,7 @@ export async function openDispute(
 ) {
   const engagement = await engagementRow(ctx, input.engagementId);
   const by = engagement && partyOf(actor, engagement);
-  if (!engagement || !by) return notFound();
+  if (!engagement || !by) return engagementNotFound();
   // Not while a Chargeback freezes it (#137); the ledger refuses holding its Labour then, too.
   if (await isFrozen(ctx, engagement.id)) return frozenRefusal();
   const grounds = await groundsOf(ctx, engagement, by);
@@ -123,6 +124,11 @@ export async function openDispute(
       text: reason,
       files: stored,
       context: { kind: "engagement-conversation", engagementId: engagement.id },
+      refusedOn: {
+        accountId: by === "client" ? engagement.clientId : engagement.artisanId,
+        jobId: engagement.jobId,
+        what: "A Dispute",
+      },
     });
     if (!checked.ok) return await discarded(ctx, stored, checked);
     const heldFor = checked.value.verdict === "held" ? checked.value.reason : null;
@@ -207,6 +213,7 @@ export async function openDispute(
         ? standing
         : refuse("changed", "The Labour not yet released changed meanwhile. Look again.");
     }
+    if (by === "client") await signalIfDisputing(ctx, engagement.clientId);
     await emailTells(ctx).catch((error: unknown) => {
       console.error("Tell emails did not go", error);
     });
@@ -325,7 +332,7 @@ export async function releaseHeld(
 ) {
   const engagement = await engagementRow(ctx, input.engagementId);
   if (actor.kind !== "client" || !engagement || engagement.clientId !== actor.accountId) {
-    return notFound();
+    return engagementNotFound();
   }
   const parsed = labourAmount.safeParse(input.amount);
   if (!parsed.success) return refuse("invalid", firstProblem(parsed.error));
@@ -957,13 +964,6 @@ function disputeIn(ctx: Context, disputeId: string, state: DisputeRow["state"], 
   );
 }
 
-/** Which party of the Engagement the actor is; null for anyone else. */
-function partyOf(actor: Actor, engagement: EngagementRow): DisputedBy | null {
-  if (actor.kind === "client" && actor.accountId === engagement.clientId) return "client";
-  if (actor.kind === "artisan" && actor.accountId === engagement.artisanId) return "artisan";
-  return null;
-}
-
 /** Deletes what was stored, then gives the refusal. */
 async function discarded<R>(ctx: Context, stored: StoredFile[], refusal: R): Promise<R> {
   await discardFiles(ctx, stored);
@@ -972,8 +972,4 @@ async function discarded<R>(ctx: Context, stored: StoredFile[], refusal: R): Pro
 
 function alreadyDisputed() {
   return refuse("already-disputed", "This Engagement is Disputed: the Admin decides it.");
-}
-
-function notFound() {
-  return refuse("not-found", "That Engagement does not exist.");
 }

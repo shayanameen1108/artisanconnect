@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { ActionButton } from "@/components/action-button";
 import { Link, useRouter } from "@tanstack/react-router";
-import { FileText, ImagePlus, Mic, Paperclip, ShieldAlert, Square } from "lucide-react";
+import {
+  FileText,
+  ImagePlus,
+  MessagesSquare,
+  Mic,
+  Paperclip,
+  ShieldAlert,
+  Square,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Refusal } from "@/components/page";
+import { EmptyState, Refusal } from "@/components/page";
 import { useAction } from "@/components/use-action";
 import { cn } from "@/lib/utils";
 import { MESSAGE_ATTACHMENTS_MAX, MESSAGE_MAX } from "@/domain/conversations/inputs";
@@ -31,6 +42,8 @@ const t = copy.conversation;
  * per Artisan, beside the one open; the Artisan's own. Events show as rows
  * that are not speech, and the viewer's messages being checked show to them
  * only. Once Hired, the Engagement's also takes voice notes and PDFs (#131).
+ * Each message is shadcn's Message and Bubble; its Message Scroller needs
+ * another package, so the list scrolls as a plain one.
  */
 export function Messages({
   jobId,
@@ -44,11 +57,11 @@ export function Messages({
   asClient: boolean;
 }) {
   if (conversations.length === 0) {
-    return <p className="text-sm text-muted-foreground">{asClient ? t.none : t.noneArtisan}</p>;
+    return <EmptyState icon={<MessagesSquare />}>{asClient ? t.none : t.noneArtisan}</EmptyState>;
   }
   const summary = conversations.find((each) => each.conversationId === open?.conversationId);
   return (
-    <div className={cn("grid gap-4", asClient && "md:grid-cols-[14rem_1fr]")}>
+    <div className={cn("grid gap-4", asClient && "md:grid-cols-4 md:*:last:col-span-3")}>
       {asClient && (
         <ul className="space-y-1">
           {conversations.map((each) => (
@@ -78,7 +91,7 @@ export function Messages({
 /** One Conversation: what was said, oldest first, and the composer while it takes messages. */
 function Thread({ view, unread }: { view: ConversationView; unread: number }) {
   const router = useRouter();
-  const end = useRef<HTMLDivElement>(null);
+  const end = useRef<HTMLLIElement>(null);
 
   // Opening it reads what was delivered; the unread mark then goes on the next load.
   useEffect(() => {
@@ -94,14 +107,14 @@ function Thread({ view, unread }: { view: ConversationView; unread: number }) {
     <Card className="min-w-0">
       <CardContent className="space-y-4">
         <div className="text-sm font-medium">{view.with.name ?? t.noName}</div>
-        <ol className="max-h-[32rem] space-y-3 overflow-y-auto">
+        <ol className="max-h-128 space-y-3 overflow-y-auto">
           {view.items.length === 0 && <li className="text-sm text-muted-foreground">{t.empty}</li>}
           {view.items.map((item) => (
             <li key={item.kind === "message" ? item.messageId : `${item.event}:${String(item.at)}`}>
               <ItemRow item={item} />
             </li>
           ))}
-          <div ref={end} />
+          <li ref={end} aria-hidden />
         </ol>
         {view.takesMessages ? (
           <Composer view={view} />
@@ -127,56 +140,59 @@ function ItemRow({ item }: { item: Item }) {
       </div>
     );
   }
+  const align = item.mine ? "end" : "start";
   return (
-    <div className={cn("flex flex-col gap-1", item.mine ? "items-end" : "items-start")}>
-      <div
-        className={cn(
-          "max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm",
-          item.mine ? "bg-primary text-primary-foreground" : "bg-muted",
-          item.state !== "delivered" && "opacity-70",
-        )}
-      >
-        {item.text && <p className="whitespace-pre-line break-words">{item.text}</p>}
-        {item.photos.length > 0 && (
-          <div className="grid grid-cols-2 gap-1.5">
-            {item.photos.map((photo, index) => (
-              <a key={photo.id} href={photo.href} target="_blank" rel="noreferrer">
-                <img
-                  src={photo.thumbnailHref}
-                  alt={t.photo(index + 1)}
-                  className="aspect-[4/3] w-full rounded-lg object-cover"
-                />
-              </a>
-            ))}
-          </div>
-        )}
-        {item.files.length > 0 && <MessageFiles files={item.files} />}
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        {item.state === "held" && (
-          <>
-            <Badge variant="secondary">{t.beingChecked}</Badge>
-            <span>{t.beingCheckedLead}</span>
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={action.busy}
-              onClick={() =>
-                void action.run(() => withdrawMessage({ data: { messageId: item.messageId } }))
-              }
-            >
-              {t.withdraw}
-            </Button>
-          </>
-        )}
-        {item.state === "refused" && item.refused && (
-          <span className="text-destructive">{t.refused(item.refused.reason)}</span>
-        )}
-        <span>{formatDate(item.at)}</span>
-        {!item.mine && <ReportAction about={{ kind: "message", id: item.messageId }} />}
-      </div>
-      <Refusal message={action.refusal} />
-    </div>
+    <Message align={align}>
+      <MessageContent>
+        <Bubble
+          align={align}
+          variant={item.mine ? "default" : "muted"}
+          className={cn(item.state !== "delivered" && "opacity-70")}
+        >
+          <BubbleContent className="space-y-2">
+            {item.text && <p className="whitespace-pre-line">{item.text}</p>}
+            {item.photos.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                {item.photos.map((photo, index) => (
+                  <a key={photo.id} href={photo.href} target="_blank" rel="noreferrer">
+                    <img
+                      src={photo.thumbnailHref}
+                      alt={t.photo(index + 1)}
+                      className="aspect-4/3 w-full rounded-lg object-cover"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
+            {item.files.length > 0 && <MessageFiles files={item.files} />}
+          </BubbleContent>
+        </Bubble>
+        <MessageFooter className="flex-wrap gap-2">
+          {item.state === "held" && (
+            <>
+              <Badge variant="warning">{t.beingChecked}</Badge>
+              <span>{t.beingCheckedLead}</span>
+              <ActionButton
+                size="xs"
+                variant="ghost"
+                disabled={action.busy}
+                onClick={() =>
+                  action.run(() => withdrawMessage({ data: { messageId: item.messageId } }))
+                }
+              >
+                {t.withdraw}
+              </ActionButton>
+            </>
+          )}
+          {item.state === "refused" && item.refused && (
+            <span className="text-destructive">{t.refused(item.refused.reason)}</span>
+          )}
+          <span className="font-normal">{formatDate(item.at)}</span>
+          {!item.mine && <ReportAction about={{ kind: "message", id: item.messageId }} />}
+        </MessageFooter>
+        <Refusal message={action.refusal} />
+      </MessageContent>
+    </Message>
   );
 }
 
@@ -232,7 +248,7 @@ function Composer({ view }: { view: ConversationView }) {
     form.append("text", text);
     // Anything else is drawn as a photo, which leaves a file the browser cannot draw as it is.
     const shrunk = await Promise.all(
-      files.map((file) =>
+      files.map(async (file) =>
         file.type === "application/pdf" || file.type.startsWith("audio/")
           ? file
           : shrinkPhoto(file),
@@ -258,7 +274,7 @@ function Composer({ view }: { view: ConversationView }) {
       }}
     >
       {view.firstMessage && (
-        <p className="flex gap-2 rounded-lg bg-muted/60 p-3 text-xs text-muted-foreground">
+        <p className="flex gap-2 rounded-lg bg-muted p-4 text-xs text-muted-foreground">
           <ShieldAlert className="size-4 shrink-0" />
           {view.afterPayment ? t.adminMayReadAfterPayment : t.adminMayRead}
         </p>
@@ -276,6 +292,7 @@ function Composer({ view }: { view: ConversationView }) {
         type="file"
         accept={view.afterPayment ? `${PHOTO_TYPES},application/pdf,audio/*` : PHOTO_TYPES}
         multiple
+        aria-label={t.attach}
         className="sr-only"
         onChange={(event) => {
           // Added to what is chosen or recorded already; the input empties to take the same file again.
@@ -361,6 +378,7 @@ const RECORDING_MAX_SECONDS = 5 * 60 - 2;
  * Records a voice note from the microphone, stopping by itself before it is
  * too long; each recording is handed over as a file, to a callback that only
  * sets state. `seconds` is how long the one going has run, or null when none is.
+ * Custom: neither shadcn nor TanStack records sound; this is the browser's MediaRecorder.
  */
 function useVoiceRecorder(onRecorded: (file: File) => void) {
   const [seconds, setSeconds] = useState<number | null>(null);

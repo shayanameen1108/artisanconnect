@@ -6,8 +6,9 @@ import type { Context } from "../context";
 import { LEDGER_KINDS, ledgerWrites, RELEASED_PARTS, type LedgerKind } from "../ledger";
 import { formatRands } from "../money";
 import type { PaymentEvent } from "../ports";
-import { formatDay, saDay } from "../sa-days";
+import { DAY_MS, formatDay, saDay } from "../sa-days";
 import { ledgerEntries, payouts, verificationChecks } from "../schema";
+import { sentBackSignalWrites } from "../signals";
 import { raiseSupportRequest } from "../support";
 import { emailTells, tellWhile, tellWithEmailWhile } from "../tells";
 import { currentPayoutAccount } from "../verification";
@@ -24,7 +25,7 @@ import { accountName, payoutReference, payoutRow, UNPAID_STATES, type PayoutRow 
 /** The clock that tells the Artisan a Payout paused for 3 days is delayed, not lost. */
 export const PAUSED_CLOCK = "payout.paused";
 
-const PAUSED_FOR_MS = 3 * 24 * 60 * 60 * 1000;
+const PAUSED_FOR_MS = 3 * DAY_MS;
 
 /**
  * The bank paid a Payout into the Artisan's Payout account: it is paid, no
@@ -233,7 +234,8 @@ const STOPPED_FROM = {
  * next Payout pays the same amount, so the Artisan Fee is not charged twice.
  * The Payout account it went to stops being current, whatever the bank's
  * reason, so nothing more goes to it. The Artisan is told, naming the
- * Receipt, which stands; the Admin sees it in the log, with no queue item.
+ * Receipt, which stands; the Admin sees it in the log, with no queue item
+ * unless it is the second sent back within 90 days, a Signal (#140).
  */
 export async function payoutStopped(
   ctx: Context,
@@ -259,6 +261,11 @@ export async function payoutStopped(
     const verb = stop.to === "refused" ? "refused" : "sent back";
     const amount = formatRands(payout.amountCents);
     const stopsAccount = current?.id === payout.payoutAccountId;
+    // A second send-back within 90 days raises a Signal (#140), with the send-back.
+    const signal =
+      stop.to === "sent-back"
+        ? await sentBackSignalWrites(ctx, payout, stop.reason, stoppedNow)
+        : [];
     await ctx.commit([
       ctx.db
         .update(payouts)
@@ -307,7 +314,7 @@ export async function payoutStopped(
         },
         stoppedNow,
       ),
-      // A second send-back within 90 days raises a Signal once there are Signals (#140).
+      ...signal,
     ]);
     const [moved] = await ctx.db
       .select({ one: sql`1` })

@@ -75,14 +75,14 @@ const SUPPORT_TAGS = {
   "paused-money": "Paused money",
 } as const;
 
-export type SupportTag = keyof typeof SUPPORT_TAGS;
+type SupportTag = keyof typeof SUPPORT_TAGS;
 
 /**
  * A system request: `about` titles it for the Admin, `details` says what
  * happened, `accountId` names the Account it concerns, if one does, and
  * `refundId` the failed Refund it is for, which the Admin pays by hand.
  */
-export type SystemSupportRequest = {
+type SystemSupportRequest = {
   tag: SupportTag;
   about: string;
   details: string;

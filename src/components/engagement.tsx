@@ -1,15 +1,27 @@
 import { useState, type ReactNode } from "react";
+import { ActionButton } from "@/components/action-button";
 import { useNavigate } from "@tanstack/react-router";
+import { useConfirm } from "@/components/confirm";
 import { FileText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Fact } from "@/components/job-details";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { NextStepCard, Refusal } from "@/components/page";
+import { useAppForm } from "@/components/form";
+import { FilePicker } from "@/components/file-picker";
+import { Deadline, NextStepCard, Refusal } from "@/components/page";
 import { useAction } from "@/components/use-action";
 import {
   CANCELLATION_REASON_MAX,
@@ -25,7 +37,7 @@ import {
 } from "@/domain/engagements/inputs";
 import { formatRands, PROTECTION_FEE_PERCENT } from "@/domain/money";
 import { formatDay } from "@/domain/sa-days";
-import { copy, formatDate } from "@/web/copy";
+import { copy, formatDate, formatDeadline } from "@/web/copy";
 import {
   acceptUpdatedQuote,
   answerNotStarted,
@@ -107,7 +119,7 @@ function nextStep(engagement: Engagement, asClient: boolean): [string, string] {
     case "work-started":
       return [t.workStarted, asClient ? t.workStartedClientLead : t.workStartedArtisanLead];
     case "awaiting-approval": {
-      const by = engagement.approval ? formatDate(engagement.approval.dueAt) : "";
+      const by = engagement.approval ? formatDeadline(engagement.approval.dueAt) : "";
       return asClient
         ? [t.awaitingClient, t.awaitingClientLead(by)]
         : [t.awaitingArtisan, t.awaitingArtisanLead(by)];
@@ -141,14 +153,14 @@ function nextStep(engagement: Engagement, asClient: boolean): [string, string] {
           asClient,
           labourRefund: labourRefund && {
             amount: formatRands(labourRefund.amountCents),
-            on: formatDate(labourRefund.dueAt),
+            on: formatDeadline(labourRefund.dueAt),
           },
         }),
       ];
     }
   }
   if (engagement.startClaim) {
-    const answerBy = formatDate(engagement.startClaim.answerBy);
+    const answerBy = formatDeadline(engagement.startClaim.answerBy);
     return asClient
       ? [t.claimedClient, t.claimedClientLead(answerBy)]
       : [t.claimedArtisan, t.claimedArtisanLead(answerBy)];
@@ -171,6 +183,7 @@ export function StartActions({
   engagement: Engagement;
   asClient: boolean;
 }) {
+  const confirm = useConfirm();
   const action = useAction();
   if (engagement.state !== "paid" || engagement.chargeback?.frozen) return null;
   const { engagementId } = engagement;
@@ -181,43 +194,43 @@ export function StartActions({
       <div className="flex flex-wrap gap-2">
         {asClient ? (
           <>
-            <Button
+            <ActionButton
               disabled={action.busy}
-              onClick={() => {
+              onClick={async () => {
                 const shown = materials?.unreleasedCents
                   ? formatRands(materials.unreleasedCents)
                   : null;
-                if (!window.confirm(t.markWorkStartedConfirm(shown))) return;
-                void action.run(() => markWorkStarted({ data: { engagementId } }));
+                if (!(await confirm(t.markWorkStartedConfirm(shown)))) return;
+                await action.run(() => markWorkStarted({ data: { engagementId } }));
               }}
             >
               {t.markWorkStarted}
-            </Button>
+            </ActionButton>
             {engagement.startClaim && (
-              <Button
+              <ActionButton
                 variant="outline"
                 disabled={action.busy}
-                onClick={() => {
-                  if (!window.confirm(t.notStartedConfirm)) return;
-                  void action.run(() => answerNotStarted({ data: { engagementId } }));
+                onClick={async () => {
+                  if (!(await confirm(t.notStartedConfirm))) return;
+                  await action.run(() => answerNotStarted({ data: { engagementId } }));
                 }}
               >
                 {t.notStarted}
-              </Button>
+              </ActionButton>
             )}
           </>
         ) : (
           "canClaimStart" in engagement &&
           (engagement.canClaimStart ? (
-            <Button
+            <ActionButton
               disabled={action.busy}
-              onClick={() => {
-                if (!window.confirm(t.claimStartedConfirm)) return;
-                void action.run(() => claimStarted({ data: { engagementId } }));
+              onClick={async () => {
+                if (!(await confirm(t.claimStartedConfirm))) return;
+                await action.run(() => claimStarted({ data: { engagementId } }));
               }}
             >
               {t.claimStarted}
-            </Button>
+            </ActionButton>
           ) : (
             // Before the start date; once said, the Next step says what follows.
             !engagement.startClaim && (
@@ -278,14 +291,21 @@ export function CancelAction({
   engagement: Engagement;
   asClient: boolean;
 }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
+  const { engagementId } = engagement;
+  const form = useAppForm({
+    defaultValues: { reason: "" },
+    onSubmit: async ({ value }) =>
+      (await confirm(t.cancelConfirm(lead))) &&
+      action.run(() => cancelEngagement({ data: { engagementId, ...value } })),
+  });
   if (!engagement.canCancel) return null;
   if (!open) {
     return (
       <div>
-        <Button variant="outline" onClick={() => setOpen(true)}>
+        <Button variant="ghost" className="text-destructive" onClick={() => setOpen(true)}>
           {t.cancelJob}
         </Button>
       </div>
@@ -300,38 +320,34 @@ export function CancelAction({
       afterWorkStarted ? (labour?.unreleasedCents ?? 0) : engagement.money.unreleasedCents,
     ),
   });
-  const { engagementId } = engagement;
   return (
-    <form
-      className="space-y-3 rounded-lg border p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!window.confirm(t.cancelConfirm(lead))) return;
-        void action.run(() => cancelEngagement({ data: { engagementId, reason } }));
-      }}
-    >
-      <p className="text-sm text-muted-foreground">{lead}</p>
-      <div className="space-y-1.5">
-        <Label htmlFor="cancel-reason">{t.cancelReason}</Label>
-        <Textarea
-          id="cancel-reason"
-          value={reason}
-          rows={2}
-          maxLength={CANCELLATION_REASON_MAX}
-          onChange={(event) => setReason(event.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">{t.cancelReasonHint(asClient)}</p>
-      </div>
-      <Refusal message={action.refusal} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" variant="destructive" disabled={action.busy}>
-          {t.cancelJob}
-        </Button>
-        <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
-          {t.keepJob}
-        </Button>
-      </div>
-    </form>
+    <form.AppForm>
+      <form.Form className="space-y-4 rounded-lg border p-4">
+        <p className="text-sm text-muted-foreground">{lead}</p>
+        <form.AppField name="reason">
+          {(field) => (
+            <field.TextareaField
+              label={t.cancelReason}
+              description={t.cancelReasonHint(asClient)}
+              rows={2}
+              maxLength={CANCELLATION_REASON_MAX}
+            />
+          )}
+        </form.AppField>
+        <Refusal message={action.refusal} />
+        <div className="flex flex-wrap gap-2">
+          <form.Submit variant="destructive">{t.cancelJob}</form.Submit>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={action.busy}
+            onClick={() => setOpen(false)}
+          >
+            {t.keepJob}
+          </Button>
+        </div>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
@@ -348,10 +364,10 @@ export function HireAgainAction({ engagement }: { engagement: ClientEngagement }
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">{t.hireAgainLead}</p>
       <Refusal message={action.refusal} />
-      <Button
+      <ActionButton
         disabled={action.busy}
         onClick={() =>
-          void action.run(async () => {
+          action.run(async () => {
             const again = await hireAgain({ data: { engagementId } });
             if (again.ok) {
               await navigate({ to: "/jobs/$jobId", params: { jobId: again.value.jobId } });
@@ -361,7 +377,7 @@ export function HireAgainAction({ engagement }: { engagement: ClientEngagement }
         }
       >
         {t.hireAgain}
-      </Button>
+      </ActionButton>
     </div>
   );
 }
@@ -410,116 +426,117 @@ function DisputeForm({
   labourCents: number;
   until: Date | null;
 }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [reason, setReason] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
+  const form = useAppForm({
+    defaultValues: { amount: "", reason: "" },
+    onSubmit: async ({ value }) => {
+      if (!(await confirm(d.confirm))) return;
+      const sent = new FormData();
+      sent.append("engagementId", engagementId);
+      sent.append("reason", value.reason);
+      if (asClient) sent.append("amount", value.amount);
+      for (const file of await Promise.all(photos.map(shrinkPhoto))) sent.append("photos", file);
+      await action.run(() => openDispute({ data: sent }));
+    },
+  });
   if (!open) {
     return (
       <div>
-        <Button variant="outline" onClick={() => setOpen(true)}>
+        <Button variant="ghost" onClick={() => setOpen(true)}>
           {d.open(asClient)}
         </Button>
       </div>
     );
   }
   const labour = formatRands(labourCents);
-
-  async function send() {
-    if (!window.confirm(d.confirm)) return;
-    const form = new FormData();
-    form.append("engagementId", engagementId);
-    form.append("reason", reason);
-    if (asClient) form.append("amount", amount);
-    for (const file of await Promise.all(photos.map(shrinkPhoto))) form.append("photos", file);
-    await action.run(() => openDispute({ data: form }));
-  }
-
   return (
-    <form
-      className="space-y-3 rounded-lg border p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void send();
-      }}
-    >
-      <p className="text-sm text-muted-foreground">
-        {asClient ? d.clientLead(labour) : d.artisanLead(labour, until && formatDate(until))}
-      </p>
-      {asClient && (
-        <div className="space-y-1.5">
-          <Label htmlFor="dispute-amount">{d.amount}</Label>
-          <Input
-            id="dispute-amount"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-          />
-        </div>
-      )}
-      <div className="space-y-1.5">
-        <Label htmlFor="dispute-reason">{d.why}</Label>
-        <Textarea
-          id="dispute-reason"
-          value={reason}
-          rows={3}
-          maxLength={DISPUTE_REASON_MAX}
-          onChange={(event) => setReason(event.target.value)}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="dispute-photos">{d.photos}</Label>
-        <Input
+    <form.AppForm>
+      <form.Form className="space-y-4 rounded-lg border p-4">
+        <p className="text-sm text-muted-foreground">
+          {asClient ? d.clientLead(labour) : d.artisanLead(labour, until && formatDeadline(until))}
+        </p>
+        {asClient && (
+          <form.AppField name="amount">
+            {(field) => <field.RandsField label={d.amount} />}
+          </form.AppField>
+        )}
+        <form.AppField name="reason">
+          {(field) => <field.TextareaField label={d.why} rows={3} maxLength={DISPUTE_REASON_MAX} />}
+        </form.AppField>
+        <FilePicker
           id="dispute-photos"
-          type="file"
+          label={d.photos}
+          hint={d.photosHint(DISPUTE_PHOTOS_MAX)}
           accept="image/jpeg,image/png,image/webp,image/heic"
-          multiple
-          onChange={(event) => setPhotos([...(event.target.files ?? [])])}
+          files={photos}
+          onFiles={setPhotos}
         />
-        <p className="text-xs text-muted-foreground">{d.photosHint(DISPUTE_PHOTOS_MAX)}</p>
-      </div>
-      <Refusal message={action.refusal} />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          variant="destructive"
-          disabled={action.busy || !reason.trim() || (asClient && !amount.trim())}
-        >
-          {d.send}
-        </Button>
-        <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
-          {d.cancel}
-        </Button>
-      </div>
-    </form>
+        <Refusal message={action.refusal} />
+        <div className="flex flex-wrap gap-2">
+          <form.Subscribe
+            selector={(state) =>
+              !!state.values.reason.trim() && (!asClient || !!state.values.amount.trim())
+            }
+          >
+            {(ready) => (
+              <form.Submit variant="destructive" disabled={!ready}>
+                {d.send}
+              </form.Submit>
+            )}
+          </form.Subscribe>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={action.busy}
+            onClick={() => setOpen(false)}
+          >
+            {d.cancel}
+          </Button>
+        </div>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
 /** The Client releases some or all of what their Dispute holds, or approves the Labour not held. */
 function ReleaseHeld({ engagement, heldCents }: { engagement: Engagement; heldCents: number }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState("");
   const { engagementId } = engagement;
   const labour = engagement.money.payments.find((each) => each.part === "labour");
   const restCents = (labour?.unreleasedCents ?? 0) - heldCents;
-  const typed = labourAmount.safeParse(amount);
+  const form = useAppForm({
+    defaultValues: { amount: "" },
+    onSubmit: async ({ value, formApi }) => {
+      const typed = labourAmount.safeParse(value.amount);
+      if (!typed.success || !(await confirm(d.releaseConfirm(formatRands(typed.data))))) return;
+      return action.run(
+        () => releaseHeld({ data: { engagementId, ...value } }),
+        () => {
+          setOpen(false);
+          formApi.reset();
+        },
+      );
+    },
+  });
   return (
     <div className="space-y-3">
       {!open && (
         <div className="flex flex-wrap gap-2">
           {engagement.approval && (
-            <Button
+            <ActionButton
               disabled={action.busy}
-              onClick={() => {
-                if (!window.confirm(d.approveRestConfirm(formatRands(restCents)))) return;
-                void action.run(() => approveCompletion({ data: { engagementId } }));
+              onClick={async () => {
+                if (!(await confirm(d.approveRestConfirm(formatRands(restCents))))) return;
+                await action.run(() => approveCompletion({ data: { engagementId } }));
               }}
             >
               {d.approveRest}
-            </Button>
+            </ActionButton>
           )}
           <Button variant="outline" onClick={() => setOpen(true)}>
             {d.release}
@@ -527,46 +544,29 @@ function ReleaseHeld({ engagement, heldCents }: { engagement: Engagement; heldCe
         </div>
       )}
       {open && (
-        <form
-          className="space-y-3 rounded-lg border p-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!typed.success) return;
-            if (!window.confirm(d.releaseConfirm(formatRands(typed.data)))) return;
-            void action.run(
-              () => releaseHeld({ data: { engagementId, amount } }),
-              () => {
-                setOpen(false);
-                setAmount("");
-              },
-            );
-          }}
-        >
-          <p className="text-sm text-muted-foreground">{d.releaseLead(formatRands(heldCents))}</p>
-          <div className="space-y-1.5">
-            <Label htmlFor="release-amount">{d.releaseAmount}</Label>
-            <Input
-              id="release-amount"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={action.busy || !typed.success}>
-              {d.releaseSend}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={action.busy}
-              onClick={() => setOpen(false)}
-            >
-              {d.cancel}
-            </Button>
-          </div>
-        </form>
+        <form.AppForm>
+          <form.Form className="space-y-4 rounded-lg border p-4">
+            <p className="text-sm text-muted-foreground">{d.releaseLead(formatRands(heldCents))}</p>
+            <form.AppField name="amount">
+              {(field) => <field.RandsField label={d.releaseAmount} />}
+            </form.AppField>
+            <div className="flex flex-wrap gap-2">
+              <form.Subscribe
+                selector={(state) => labourAmount.safeParse(state.values.amount).success}
+              >
+                {(typed) => <form.Submit disabled={!typed}>{d.releaseSend}</form.Submit>}
+              </form.Subscribe>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={action.busy}
+                onClick={() => setOpen(false)}
+              >
+                {d.cancel}
+              </Button>
+            </div>
+          </form.Form>
+        </form.AppForm>
       )}
       <Refusal message={action.refusal} />
     </div>
@@ -628,7 +628,7 @@ export function DisputeCard({
                 <img
                   src={photo.thumbnailHref}
                   alt={d.photo(index + 1)}
-                  className="aspect-[4/3] w-full rounded-lg object-cover"
+                  className="aspect-4/3 w-full rounded-lg object-cover"
                 />
               </a>
             ))}
@@ -638,7 +638,7 @@ export function DisputeCard({
           <p className="text-muted-foreground">{d.settled(formatDate(dispute.closedAt))}</p>
         )}
         {dispute.decision && dispute.closedAt && (
-          <div className="space-y-2 rounded-lg bg-muted/60 p-3">
+          <div className="space-y-2 rounded-lg bg-muted p-4">
             <dl className="space-y-2">
               <Row label={d.releasedTo(asClient)}>
                 {formatRands(dispute.decision.releasedCents)}
@@ -723,34 +723,37 @@ function ProposedLines({ proposed }: { proposed: Proposed }) {
     },
   ];
   return (
-    <table className="w-full text-sm">
-      <thead className="text-xs text-muted-foreground">
-        <tr>
-          <th />
-          <th className="text-right font-normal">{u.from}</th>
-          <th className="text-right font-normal">{u.to}</th>
-        </tr>
-      </thead>
-      <tbody>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead />
+          <TableHead className="text-right">{u.from}</TableHead>
+          <TableHead className="text-right">{u.to}</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {lines.map((line) => (
-          <tr key={line.label}>
-            <td className="py-1 text-muted-foreground">{line.label}</td>
-            <td className="py-1 text-right">{formatRands(line.from)}</td>
-            <td className="py-1 text-right font-medium">{formatRands(line.to)}</td>
-          </tr>
+          <TableRow key={line.label}>
+            <TableCell className="text-muted-foreground">{line.label}</TableCell>
+            <TableCell className="text-right">{formatRands(line.from)}</TableCell>
+            <TableCell className="text-right font-medium">{formatRands(line.to)}</TableCell>
+          </TableRow>
         ))}
-        <tr className="border-t">
-          <td className="pt-2 font-medium">{u.difference}</td>
-          <td />
-          <td className="pt-2 text-right font-medium">{formatRands(proposed.addsCents)}</td>
-        </tr>
-      </tbody>
-    </table>
+      </TableBody>
+      <TableFooter>
+        <TableRow>
+          <TableCell>{u.difference}</TableCell>
+          <TableCell />
+          <TableCell className="text-right">{formatRands(proposed.addsCents)}</TableCell>
+        </TableRow>
+      </TableFooter>
+    </Table>
   );
 }
 
 /** The Client pays the difference plus its Protection Fee through checkout, or rejects it. */
 function PayOrReject({ proposed }: { proposed: Extract<Proposed, { payCents: number }> }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [acknowledged, setAcknowledged] = useState(false);
   const { updatedQuoteId } = proposed;
@@ -775,7 +778,7 @@ function PayOrReject({ proposed }: { proposed: Extract<Proposed, { payCents: num
 
   return (
     <div className="space-y-3">
-      <dl className="space-y-1 rounded-lg bg-muted/60 p-3 text-sm">
+      <dl className="space-y-1 rounded-lg bg-muted p-4 text-sm">
         <div className="flex justify-between gap-3">
           <dt className="text-muted-foreground">{u.fee(PROTECTION_FEE_PERCENT)}</dt>
           <dd>{fee}</dd>
@@ -795,16 +798,16 @@ function PayOrReject({ proposed }: { proposed: Extract<Proposed, { payCents: num
         <Button disabled={action.busy || !acknowledged} onClick={pay}>
           {u.pay(formatRands(proposed.payCents))}
         </Button>
-        <Button
+        <ActionButton
           variant="outline"
           disabled={action.busy}
-          onClick={() => {
-            if (!window.confirm(u.rejectConfirm)) return;
-            void action.run(() => rejectUpdatedQuote({ data: { updatedQuoteId } }));
+          onClick={async () => {
+            if (!(await confirm(u.rejectConfirm))) return;
+            await action.run(() => rejectUpdatedQuote({ data: { updatedQuoteId } }));
           }}
         >
           {u.reject}
-        </Button>
+        </ActionButton>
       </div>
     </div>
   );
@@ -812,21 +815,22 @@ function PayOrReject({ proposed }: { proposed: Extract<Proposed, { payCents: num
 
 /** The Artisan's Updated Quote waiting for the Client, which they may withdraw. */
 function Withdraw({ updatedQuoteId }: { updatedQuoteId: string }) {
+  const confirm = useConfirm();
   const action = useAction();
   return (
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">{u.waiting}</p>
       <Refusal message={action.refusal} />
-      <Button
+      <ActionButton
         variant="outline"
         disabled={action.busy}
-        onClick={() => {
-          if (!window.confirm(u.withdrawConfirm)) return;
-          void action.run(() => withdrawUpdatedQuote({ data: { updatedQuoteId } }));
+        onClick={async () => {
+          if (!(await confirm(u.withdrawConfirm))) return;
+          await action.run(() => withdrawUpdatedQuote({ data: { updatedQuoteId } }));
         }}
       >
         {u.withdraw}
-      </Button>
+      </ActionButton>
     </div>
   );
 }
@@ -839,13 +843,28 @@ function ProposeForm({
   engagementId: string;
   now: NonNullable<ArtisanEngagement["proposeFrom"]>;
 }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const typedNow = {
-    labour: (now.labourCents / 100).toFixed(2),
-    materials: (now.materialsCents / 100).toFixed(2),
+  // Read as the server reads it, so the button and the confirm agree with it.
+  const addsOf = (amounts: { labour: string; materials: string }) => {
+    const typed = updatedQuoteFields.safeParse(amounts);
+    return typed.success
+      ? typed.data.labour + typed.data.materials - now.labourCents - now.materialsCents
+      : 0;
   };
-  const [amounts, setAmounts] = useState(typedNow);
+  const form = useAppForm({
+    defaultValues: {
+      labour: (now.labourCents / 100).toFixed(2),
+      materials: (now.materialsCents / 100).toFixed(2),
+    },
+    onSubmit: async ({ value }) =>
+      (await confirm(u.sendConfirm(formatRands(addsOf(value))))) &&
+      action.run(
+        () => proposeUpdatedQuote({ data: { engagementId, ...value } }),
+        () => setOpen(false),
+      ),
+  });
   if (!open) {
     return (
       <div className="space-y-2">
@@ -856,62 +875,48 @@ function ProposeForm({
       </div>
     );
   }
-  // Read as the server reads it, so the button and the confirm agree with it.
-  const typed = updatedQuoteFields.safeParse(amounts);
-  const addsCents = typed.success
-    ? typed.data.labour + typed.data.materials - now.labourCents - now.materialsCents
-    : 0;
   const clientSupplies = now.materialsBy === "client";
   return (
-    <form
-      className="space-y-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!window.confirm(u.sendConfirm(formatRands(addsCents)))) return;
-        void action.run(
-          () => proposeUpdatedQuote({ data: { engagementId, ...amounts } }),
-          () => setOpen(false),
-        );
-      }}
-    >
-      <p className="text-sm text-muted-foreground">{u.proposeLead}</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {(["labour", "materials"] as const).map((part) => (
-          <div key={part} className="space-y-1.5">
-            <Label htmlFor={`updated-${part}`}>{u[part]}</Label>
-            <Input
-              id={`updated-${part}`}
-              inputMode="decimal"
-              value={amounts[part]}
-              disabled={part === "materials" && clientSupplies}
-              onChange={(event) => setAmounts({ ...amounts, [part]: event.target.value })}
-            />
-            <p className="text-xs text-muted-foreground">
-              {part === "materials" && clientSupplies
-                ? u.clientSupplies
-                : u.atLeast(formatRands(now[`${part}Cents`]))}
-            </p>
-          </div>
-        ))}
-      </div>
-      <Refusal message={action.refusal} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={action.busy || addsCents <= 0}>
-          {u.send}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={action.busy}
-          onClick={() => {
-            setOpen(false);
-            setAmounts(typedNow);
-          }}
-        >
-          {u.cancel}
-        </Button>
-      </div>
-    </form>
+    <form.AppForm>
+      <form.Form className="space-y-3">
+        <p className="text-sm text-muted-foreground">{u.proposeLead}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(["labour", "materials"] as const).map((part) => (
+            <form.AppField key={part} name={part}>
+              {(field) => (
+                <field.RandsField
+                  label={u[part]}
+                  description={
+                    part === "materials" && clientSupplies
+                      ? u.clientSupplies
+                      : u.atLeast(formatRands(now[`${part}Cents`]))
+                  }
+
+                  disabled={part === "materials" && clientSupplies}
+                />
+              )}
+            </form.AppField>
+          ))}
+        </div>
+        <Refusal message={action.refusal} />
+        <div className="flex flex-wrap gap-2">
+          <form.Subscribe selector={(state) => addsOf(state.values) > 0}>
+            {(adds) => <form.Submit disabled={!adds}>{u.send}</form.Submit>}
+          </form.Subscribe>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={action.busy}
+            onClick={() => {
+              setOpen(false);
+              form.reset();
+            }}
+          >
+            {u.cancel}
+          </Button>
+        </div>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
@@ -924,7 +929,7 @@ function FixRequestNote({
   asClient: boolean;
 }) {
   return (
-    <div className="space-y-1 rounded-lg bg-muted/60 p-3 text-sm">
+    <div className="space-y-1 rounded-lg bg-muted p-4 text-sm">
       <div className="text-xs text-muted-foreground">
         {t.fixRequestNote} · {formatDate(fixRequest.requestedAt)}
       </div>
@@ -956,17 +961,17 @@ function CompletionCheck({
     return <p className="text-sm text-destructive">{t.completionRefused(check.reason)}</p>;
   }
   return (
-    <div className="space-y-2 rounded-lg bg-muted/60 p-3 text-sm">
+    <div className="space-y-2 rounded-lg bg-muted p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary">{t.completionBeingChecked}</Badge>
-        <Button
+        <Badge variant="warning">{t.completionBeingChecked}</Badge>
+        <ActionButton
           size="xs"
           variant="ghost"
           disabled={action.busy}
-          onClick={() => void action.run(() => withdrawCompletion({ data: { engagementId } }))}
+          onClick={() => action.run(() => withdrawCompletion({ data: { engagementId } }))}
         >
           {t.withdrawCompletion}
-        </Button>
+        </ActionButton>
       </div>
       <p className="text-xs text-muted-foreground">{t.completionBeingCheckedLead}</p>
       <Refusal message={action.refusal} />
@@ -980,13 +985,28 @@ function CompletionCheck({
  * before they are sent, as a message's are.
  */
 function CompletionForm({ engagement }: { engagement: ArtisanEngagement }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
   const [documents, setDocuments] = useState<File[]>([]);
   const [certificate, setCertificate] = useState<File | null>(null);
   const needed = engagement.certificateNeeded ? CERTIFICATES[engagement.certificateNeeded] : null;
+  const form = useAppForm({
+    defaultValues: { note: "" },
+    onSubmit: async ({ value }) => {
+      if (!(await confirm(t.markCompleteConfirm))) return;
+      const sent = new FormData();
+      sent.append("engagementId", engagement.engagementId);
+      sent.append("note", value.note);
+      for (const file of await Promise.all(photos.map(shrinkPhoto))) sent.append("photos", file);
+      for (const file of await Promise.all(documents.map(shrinkIfPhoto))) {
+        sent.append("documents", file);
+      }
+      if (certificate) sent.append("certificate", await shrinkIfPhoto(certificate));
+      await action.run(() => markComplete({ data: sent }));
+    },
+  });
   if (!open) {
     return (
       <div>
@@ -994,85 +1014,83 @@ function CompletionForm({ engagement }: { engagement: ArtisanEngagement }) {
       </div>
     );
   }
-
-  async function send() {
-    if (!window.confirm(t.markCompleteConfirm)) return;
-    const form = new FormData();
-    form.append("engagementId", engagement.engagementId);
-    form.append("note", note);
-    for (const file of await Promise.all(photos.map(shrinkPhoto))) form.append("photos", file);
-    for (const file of await Promise.all(documents.map(shrinkIfPhoto))) {
-      form.append("documents", file);
-    }
-    if (certificate) form.append("certificate", await shrinkIfPhoto(certificate));
-    await action.run(() => markComplete({ data: form }));
-  }
-
+  const files = (
+    id: string,
+    label: string,
+    hint: string,
+    accept: string,
+    chosen: File[],
+    onFiles: (chosen: File[]) => void,
+    multiple = true,
+  ) => (
+    <FilePicker
+      id={id}
+      label={label}
+      hint={hint}
+      accept={accept}
+      multiple={multiple}
+      files={chosen}
+      onFiles={onFiles}
+    />
+  );
+  const anyDocument = "application/pdf,image/jpeg,image/png,image/webp,image/heic";
   return (
-    <form
-      className="space-y-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void send();
-      }}
-    >
-      <div className="space-y-1.5">
-        <Label htmlFor="completion-note">{t.completionNote}</Label>
-        <Textarea
-          id="completion-note"
-          value={note}
-          rows={4}
-          maxLength={NOTE_MAX}
-          onChange={(event) => setNote(event.target.value)}
-        />
-        <p className="text-xs text-muted-foreground">{t.completionNoteHint}</p>
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="completion-photos">{t.afterPhotos}</Label>
-        <Input
-          id="completion-photos"
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/heic"
-          multiple
-          onChange={(event) => setPhotos([...(event.target.files ?? [])])}
-        />
-        <p className="text-xs text-muted-foreground">{t.afterPhotosHint(COMPLETION_PHOTOS_MAX)}</p>
-      </div>
-      {needed && (
-        <div className="space-y-1.5">
-          <Label htmlFor="completion-certificate">{t.certificate(needed.name)}</Label>
-          <Input
-            id="completion-certificate"
-            type="file"
-            accept="application/pdf,image/jpeg,image/png,image/webp,image/heic"
-            onChange={(event) => setCertificate(event.target.files?.[0] ?? null)}
-          />
-          <p className="text-xs text-muted-foreground">
-            {t.certificateHint(needed.name, needed.neededOn)}
-          </p>
+    <form.AppForm>
+      <form.Form className="space-y-4">
+        <form.AppField name="note">
+          {(field) => (
+            <field.TextareaField
+              label={t.completionNote}
+              description={t.completionNoteHint}
+              rows={4}
+              maxLength={NOTE_MAX}
+            />
+          )}
+        </form.AppField>
+        {files(
+          "completion-photos",
+          t.afterPhotos,
+          t.afterPhotosHint(COMPLETION_PHOTOS_MAX),
+          "image/jpeg,image/png,image/webp,image/heic",
+          photos,
+          setPhotos,
+        )}
+        {needed &&
+          files(
+            "completion-certificate",
+            t.certificate(needed.name),
+            t.certificateHint(needed.name, needed.neededOn),
+            anyDocument,
+            certificate ? [certificate] : [],
+            (chosen) => setCertificate(chosen[0] ?? null),
+            false,
+          )}
+        {files(
+          "completion-documents",
+          t.documents,
+          t.documentsHint(COMPLETION_DOCUMENTS_MAX),
+          anyDocument,
+          documents,
+          setDocuments,
+        )}
+        <Refusal message={action.refusal} />
+        <div className="flex flex-wrap gap-2">
+          <form.Subscribe selector={(state) => !!state.values.note.trim()}>
+            {(written) => (
+              <form.Submit disabled={!written || photos.length === 0}>{t.markComplete}</form.Submit>
+            )}
+          </form.Subscribe>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={action.busy}
+            onClick={() => setOpen(false)}
+          >
+            {t.cancel}
+          </Button>
         </div>
-      )}
-      <div className="space-y-1.5">
-        <Label htmlFor="completion-documents">{t.documents}</Label>
-        <Input
-          id="completion-documents"
-          type="file"
-          accept="application/pdf,image/jpeg,image/png,image/webp,image/heic"
-          multiple
-          onChange={(event) => setDocuments([...(event.target.files ?? [])])}
-        />
-        <p className="text-xs text-muted-foreground">{t.documentsHint(COMPLETION_DOCUMENTS_MAX)}</p>
-      </div>
-      <Refusal message={action.refusal} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={action.busy || !note.trim() || photos.length === 0}>
-          {t.markComplete}
-        </Button>
-        <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
-          {t.cancel}
-        </Button>
-      </div>
-    </form>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
@@ -1083,62 +1101,58 @@ function shrinkIfPhoto(file: File): Promise<File> {
 
 /** The Client approves the Completion, or asks for a fix with a note. */
 function ApproveOrFix({ engagement }: { engagement: Engagement }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [asking, setAsking] = useState(false);
-  const [note, setNote] = useState("");
   const { engagementId } = engagement;
   const labour = engagement.money.payments.find((each) => each.part === "labour");
+  const form = useAppForm({
+    defaultValues: { note: "" },
+    onSubmit: ({ value }) =>
+      action.run(
+        () => requestFix({ data: { engagementId, ...value } }),
+        () => setAsking(false),
+      ),
+  });
   if (asking) {
     return (
-      <form
-        className="space-y-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void action.run(
-            () => requestFix({ data: { engagementId, note } }),
-            () => setAsking(false),
-          );
-        }}
-      >
-        <Label htmlFor="fix-note">{t.fixNote}</Label>
-        <Textarea
-          id="fix-note"
-          value={note}
-          rows={3}
-          maxLength={NOTE_MAX}
-          onChange={(event) => setNote(event.target.value)}
-        />
-        <Refusal message={action.refusal} />
-        <div className="flex flex-wrap gap-2">
-          <Button type="submit" disabled={action.busy || !note.trim()}>
-            {t.sendFix}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={action.busy}
-            onClick={() => setAsking(false)}
-          >
-            {t.cancel}
-          </Button>
-        </div>
-      </form>
+      <form.AppForm>
+        <form.Form className="space-y-2">
+          <form.AppField name="note">
+            {(field) => <field.TextareaField label={t.fixNote} rows={3} maxLength={NOTE_MAX} />}
+          </form.AppField>
+          <Refusal message={action.refusal} />
+          <div className="flex flex-wrap gap-2">
+            <form.Subscribe selector={(state) => !!state.values.note.trim()}>
+              {(written) => <form.Submit disabled={!written}>{t.sendFix}</form.Submit>}
+            </form.Subscribe>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={action.busy}
+              onClick={() => setAsking(false)}
+            >
+              {t.cancel}
+            </Button>
+          </div>
+        </form.Form>
+      </form.AppForm>
     );
   }
   return (
     <>
       <Refusal message={action.refusal} />
       <div className="flex flex-wrap gap-2">
-        <Button
+        <ActionButton
           disabled={action.busy}
-          onClick={() => {
+          onClick={async () => {
             const shown = labour?.unreleasedCents ? formatRands(labour.unreleasedCents) : null;
-            if (!window.confirm(t.approveConfirm(shown))) return;
-            void action.run(() => approveCompletion({ data: { engagementId } }));
+            if (!(await confirm(t.approveConfirm(shown)))) return;
+            await action.run(() => approveCompletion({ data: { engagementId } }));
           }}
         >
           {t.approve}
-        </Button>
+        </ActionButton>
         <Button variant="outline" disabled={action.busy} onClick={() => setAsking(true)}>
           {t.askFix}
         </Button>
@@ -1165,7 +1179,7 @@ export function CompletionCard({ engagement }: { engagement: Engagement }) {
               <img
                 src={photo.thumbnailHref}
                 alt={t.photo(index + 1)}
-                className="aspect-[4/3] w-full rounded-lg object-cover"
+                className="aspect-4/3 w-full rounded-lg object-cover"
               />
             </a>
           ))}
@@ -1199,7 +1213,7 @@ export function CompletionCard({ engagement }: { engagement: Engagement }) {
 export function PaymentsCard({ engagement }: { engagement: Engagement }) {
   const { approval } = engagement;
   const barLabel = approval
-    ? (engagement.state === "disputed" ? t.restBar : t.approvalBar)(formatDate(approval.dueAt))
+    ? (engagement.state === "disputed" ? t.restBar : t.approvalBar)(formatDeadline(approval.dueAt))
     : "";
   return (
     <Card>
@@ -1210,8 +1224,8 @@ export function PaymentsCard({ engagement }: { engagement: Engagement }) {
         <ol className="divide-y rounded-lg border">
           {engagement.money.payments.map((payment, index) => (
             <li key={payment.part} className="flex flex-wrap items-center gap-3 p-3 text-sm">
-              <span className="flex size-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                {index + 1}
+              <span className="text-xs font-medium text-muted-foreground tabular-nums">
+                {index + 1}.
               </span>
               <div className="min-w-0 flex-1">
                 <div className="font-medium">{t.parts[payment.part].title}</div>
@@ -1219,26 +1233,16 @@ export function PaymentsCard({ engagement }: { engagement: Engagement }) {
                   {t.parts[payment.part].released}
                 </div>
               </div>
-              <span className="font-medium">{formatRands(payment.amountCents)}</span>
-              <Badge variant="secondary">{t.partStates[payment.state]}</Badge>
+              <span className="font-medium tabular-nums">{formatRands(payment.amountCents)}</span>
+              <Badge variant={payment.state === "released" ? "success" : "secondary"}>
+                {t.partStates[payment.state]}
+              </Badge>
             </li>
           ))}
         </ol>
         {approval && (
-          <div className="space-y-1.5">
-            <div
-              role="progressbar"
-              aria-label={barLabel}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(approval.elapsed * 100)}
-              className="h-2 overflow-hidden rounded-full bg-muted"
-            >
-              <div
-                className="h-full rounded-full bg-primary"
-                style={{ width: `${approval.elapsed * 100}%` }}
-              />
-            </div>
+          <div className="space-y-2">
+            <Progress value={Math.round(approval.elapsed * 100)} aria-label={barLabel} />
             <p className="text-xs text-muted-foreground">{barLabel}</p>
           </div>
         )}
@@ -1260,7 +1264,7 @@ function RefundsList({ engagement }: { engagement: Engagement }) {
         {engagement.refunds.map((each) => (
           <li key={each.refundId} className="flex flex-wrap items-center gap-3 p-3 text-sm">
             <div className="min-w-0 flex-1">
-              <div className="font-medium">{formatRands(each.amountCents)}</div>
+              <div className="font-medium tabular-nums">{formatRands(each.amountCents)}</div>
               <div className="text-xs text-muted-foreground">
                 {[
                   t.refundLine(
@@ -1286,11 +1290,36 @@ function RefundsList({ engagement }: { engagement: Engagement }) {
 
 /** The Artisan names an amount of each unreleased line to refund, while any is unreleased. */
 function RefundForm({ engagement }: { engagement: ArtisanEngagement }) {
+  const confirm = useConfirm();
   const action = useAction();
   const [open, setOpen] = useState(false);
-  const [amounts, setAmounts] = useState({ materials: "", labour: "" });
   const { refundable } = engagement;
   const lines = (["materials", "labour"] as const).filter((part) => refundable[`${part}Cents`] > 0);
+  // Read as the server reads it, so the button and the confirm agree with it.
+  const centsOf = (amounts: { materials: string; labour: string }) => {
+    const typed = refundFields.safeParse(
+      Object.fromEntries(lines.map((part) => [part, amounts[part]])),
+    );
+    return typed.success ? typed.data.materials + typed.data.labour : 0;
+  };
+  const form = useAppForm({
+    defaultValues: { materials: "", labour: "" },
+    onSubmit: async ({ value, formApi }) =>
+      (await confirm(t.refundConfirm(formatRands(centsOf(value))))) &&
+      action.run(
+        () =>
+          refund({
+            data: {
+              engagementId: engagement.engagementId,
+              ...Object.fromEntries(lines.map((part) => [part, value[part]])),
+            },
+          }),
+        () => {
+          setOpen(false);
+          formApi.reset();
+        },
+      ),
+  });
   if (lines.length === 0) return null;
   if (!open) {
     return (
@@ -1301,59 +1330,39 @@ function RefundForm({ engagement }: { engagement: ArtisanEngagement }) {
       </div>
     );
   }
-  // Read as the server reads it, so the button and the confirm agree with it.
-  const typed = refundFields.safeParse(
-    Object.fromEntries(lines.map((part) => [part, amounts[part]])),
-  );
-  const typedCents = typed.success ? typed.data.materials + typed.data.labour : 0;
   return (
-    <form
-      className="space-y-3 rounded-lg border p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!window.confirm(t.refundConfirm(formatRands(typedCents)))) return;
-        void action.run(
-          () =>
-            refund({
-              data: {
-                engagementId: engagement.engagementId,
-                ...Object.fromEntries(lines.map((part) => [part, amounts[part]])),
-              },
-            }),
-          () => {
-            setOpen(false);
-            setAmounts({ materials: "", labour: "" });
-          },
-        );
-      }}
-    >
-      <p className="text-sm text-muted-foreground">{t.refundLead}</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {lines.map((part) => (
-          <div key={part} className="space-y-1.5">
-            <Label htmlFor={`refund-${part}`}>
-              {t.refundUpTo(t.parts[part].title, formatRands(refundable[`${part}Cents`]))}
-            </Label>
-            <Input
-              id={`refund-${part}`}
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amounts[part]}
-              onChange={(event) => setAmounts({ ...amounts, [part]: event.target.value })}
-            />
-          </div>
-        ))}
-      </div>
-      <Refusal message={action.refusal} />
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={action.busy || typedCents === 0}>
-          {t.refundSend}
-        </Button>
-        <Button type="button" variant="ghost" disabled={action.busy} onClick={() => setOpen(false)}>
-          {t.cancelRefund}
-        </Button>
-      </div>
-    </form>
+    <form.AppForm>
+      <form.Form className="space-y-4 rounded-lg border p-4">
+        <p className="text-sm text-muted-foreground">{t.refundLead}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {lines.map((part) => (
+            <form.AppField key={part} name={part}>
+              {(field) => (
+                <field.RandsField
+                  label={t.refundUpTo(t.parts[part].title, formatRands(refundable[`${part}Cents`]))}
+
+                  placeholder="0.00"
+                />
+              )}
+            </form.AppField>
+          ))}
+        </div>
+        <Refusal message={action.refusal} />
+        <div className="flex flex-wrap gap-2">
+          <form.Subscribe selector={(state) => centsOf(state.values) > 0}>
+            {(some) => <form.Submit disabled={!some}>{t.refundSend}</form.Submit>}
+          </form.Subscribe>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={action.busy}
+            onClick={() => setOpen(false)}
+          >
+            {t.cancelRefund}
+          </Button>
+        </div>
+      </form.Form>
+    </form.AppForm>
   );
 }
 
@@ -1408,7 +1417,7 @@ export function MoneyCard({ engagement }: { engagement: Engagement }) {
   );
 }
 
-/** The Hired Quote's start, duration, and Warranty. */
+/** The Hired Quote's start, duration, and Warranty, and the pair's Protected Relationship Period. */
 export function HiredQuoteCard({ engagement }: { engagement: Engagement }) {
   return (
     <Card size="sm">
@@ -1422,6 +1431,10 @@ export function HiredQuoteCard({ engagement }: { engagement: Engagement }) {
           <Fact label={copy.quote.warrantyShort}>
             {engagement.warranty ?? copy.quote.noWarranty}
           </Fact>
+          <Fact label={t.protectedUntil}>
+            <Deadline at={engagement.protectedUntil} />
+            <p className="text-xs font-normal text-muted-foreground">{t.protectedLead}</p>
+          </Fact>
         </dl>
       </CardContent>
     </Card>
@@ -1432,7 +1445,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium">{children}</dd>
+      <dd className="font-medium tabular-nums">{children}</dd>
     </div>
   );
 }

@@ -1,0 +1,218 @@
+import { describe, expect, test } from "vitest";
+import { visitor } from "@/domain/actor";
+import { createHarness, type Harness } from "../support/harness";
+
+// An Account changes its Email by giving its password and proving the new one
+// with an Email code (#141). The old one signs in until then and is told of the change, so a
+// stolen session cannot silently take the Account. An Email held by any
+// Account or an Admin is refused.
+
+const IP = "203.0.113.7";
+
+/** The cookie header a browser sends back for the cookies a sign-in set. */
+function cookieOf(cookies: string[]) {
+  return cookies.map((cookie) => cookie.split(";")[0]).join("; ");
+}
+
+async function signsIn(domain: Harness["domain"], email: string, password: string) {
+  return domain.accounts.signIn(visitor, { email, password, ip: IP, device: null });
+}
+
+describe("changing the Email", () => {
+  test("sends an Email code to the new address; the old one signs in until it is proven", async () => {
+    const { domain, given, mailer } = await createHarness();
+    const client = await given.client({ email: "thandi@example.com" });
+
+    const asked = await domain.accounts.requestEmailChange(client.actor, {
+      email: "thandi.m@example.com",
+      password: client.password,
+      cookie: cookieOf(client.cookies),
+    });
+
+    expect(asked).toEqual({ ok: true, value: { email: "thandi.m@example.com" } });
+    expect(mailer.sentTo("thandi.m@example.com")).toEqual([
+      expect.objectContaining({ subject: "Your ArtisanConnect Email code" }),
+    ]);
+    expect((await domain.accounts.me(client.actor))?.email).toBe("thandi@example.com");
+    expect(await signsIn(domain, "thandi@example.com", client.password)).toMatchObject({
+      ok: true,
+    });
+    expect(await signsIn(domain, "thandi.m@example.com", client.password)).toMatchObject({
+      ok: false,
+    });
+  });
+
+  test("is done by the code: the new address signs in, the old one does not and is told", async () => {
+    const { domain, given } = await createHarness();
+    const client = await given.client({ email: "thandi@example.com" });
+    const cookie = cookieOf(client.cookies);
+    await domain.accounts.requestEmailChange(client.actor, {
+      email: "thandi.m@example.com",
+      password: client.password,
+      cookie,
+    });
+
+    const changed = await domain.accounts.changeEmail(client.actor, {
+      email: "thandi.m@example.com",
+      code: given.codeSentTo("thandi.m@example.com"),
+      cookie,
+    });
+
+    expect(changed).toEqual({
+      ok: true,
+      value: { email: "thandi.m@example.com", cookies: expect.any(Array) },
+    });
+    expect((await domain.accounts.me(client.actor))?.email).toBe("thandi.m@example.com");
+    expect(await signsIn(domain, "thandi.m@example.com", client.password)).toMatchObject({
+      ok: true,
+    });
+    expect(await signsIn(domain, "thandi@example.com", client.password)).toMatchObject({
+      ok: false,
+      refusal: { reason: "wrong-credentials" },
+    });
+  });
+
+  test("tells the old address by email, naming no new address", async () => {
+    const { domain, given, mailer } = await createHarness();
+    const client = await given.client({ email: "thandi@example.com" });
+    const cookie = cookieOf(client.cookies);
+    await domain.accounts.requestEmailChange(client.actor, {
+      email: "thandi.m@example.com",
+      password: client.password,
+      cookie,
+    });
+    await domain.accounts.changeEmail(client.actor, {
+      email: "thandi.m@example.com",
+      code: given.codeSentTo("thandi.m@example.com"),
+      cookie,
+    });
+
+    const told = mailer.sentTo("thandi@example.com").at(-1);
+    expect(told?.subject).toBe("Your ArtisanConnect Email was changed");
+    expect(told?.text).not.toContain("thandi.m@example.com");
+  });
+
+  test("takes an address an unproven sign-up waited on once its code stopped working", async () => {
+    const { domain, given, clock } = await createHarness();
+    const rules = await domain.marketplaceRules.current(visitor);
+    await domain.accounts.signUp(visitor, {
+      kind: "artisan",
+      name: "Someone Else",
+      email: "taken@example.com",
+      password: "another horse battery",
+      rulesVersion: rules.version,
+      consentsToDataUse: true,
+    });
+    clock.advance({ minutes: 11 });
+    const client = await given.client();
+    const cookie = cookieOf(client.cookies);
+
+    await domain.accounts.requestEmailChange(client.actor, {
+      email: "taken@example.com",
+      password: client.password,
+      cookie,
+    });
+    const changed = await domain.accounts.changeEmail(client.actor, {
+      email: "taken@example.com",
+      code: given.codeSentTo("taken@example.com"),
+      cookie,
+    });
+
+    expect(changed).toMatchObject({ ok: true });
+    expect((await domain.accounts.me(client.actor))?.email).toBe("taken@example.com");
+  });
+});
+
+describe("changing the Email, refused", () => {
+  test.each([
+    ["for an address another Account holds, whatever its case", "Sipho@Example.com", "held"],
+    ["for an Admin's address", "staff@example.com", "held"],
+    ["for the address it has already", "thandi@example.com", "same-email"],
+    [
+      "without the Account's password, so a session taken from it cannot change it",
+      "thief@example.com",
+      "wrong-password",
+    ],
+  ])("%s, sending nothing", async (_, email, reason) => {
+    const { domain, given, mailer } = await createHarness();
+    await given.artisan({ email: "sipho@example.com" });
+    await given.admin({ email: "staff@example.com" });
+    const client = await given.client({ email: "thandi@example.com" });
+    const before = mailer.sentTo(email.toLowerCase()).length;
+
+    const asked = await domain.accounts.requestEmailChange(client.actor, {
+      email,
+      password: reason === "wrong-password" ? "not the password" : client.password,
+      cookie: cookieOf(client.cookies),
+    });
+
+    expect(asked).toMatchObject({ ok: false, refusal: { reason } });
+    expect(mailer.sentTo(email.toLowerCase())).toHaveLength(before);
+  });
+
+  test("once another Account took the address while the code waited", async () => {
+    const { domain, given, clock } = await createHarness();
+    const client = await given.client();
+    const cookie = cookieOf(client.cookies);
+    await domain.accounts.requestEmailChange(client.actor, {
+      email: "new@example.com",
+      password: client.password,
+      cookie,
+    });
+    const code = given.codeSentTo("new@example.com");
+    clock.advance({ minutes: 1 });
+    await given.artisan({ email: "new@example.com" });
+
+    const changed = await domain.accounts.changeEmail(client.actor, {
+      email: "new@example.com",
+      code,
+      cookie,
+    });
+
+    expect(changed).toMatchObject({ ok: false, refusal: { reason: "held" } });
+    expect((await domain.accounts.me(client.actor))?.email).toBe(client.email);
+  });
+
+  test("with a wrong code, leaving the Email as it was", async () => {
+    const { domain, given } = await createHarness();
+    const client = await given.client();
+    const cookie = cookieOf(client.cookies);
+    await domain.accounts.requestEmailChange(client.actor, {
+      email: "new@example.com",
+      password: client.password,
+      cookie,
+    });
+    const right = given.codeSentTo("new@example.com");
+    const wrong = right === "000000" ? "111111" : "000000";
+
+    const changed = await domain.accounts.changeEmail(client.actor, {
+      email: "new@example.com",
+      code: wrong,
+      cookie,
+    });
+
+    expect(changed).toMatchObject({ ok: false, refusal: { reason: "wrong-code" } });
+    expect((await domain.accounts.me(client.actor))?.email).toBe(client.email);
+  });
+
+  test("for anyone but the signed-in Account the session is", async () => {
+    const { domain, given } = await createHarness();
+    const client = await given.client();
+    const artisan = await given.artisan();
+
+    expect(
+      await domain.accounts.requestEmailChange(visitor, {
+        email: "new@example.com",
+        password: client.password,
+        cookie: cookieOf(client.cookies),
+      }),
+    ).toMatchObject({ ok: false, refusal: { reason: "sign-in-required" } });
+    expect(
+      await domain.accounts.requestEmailChange(artisan.actor, {
+        email: "new@example.com",
+        password: artisan.password,
+        cookie: cookieOf(client.cookies),
+      }),
+    ).toMatchObject({ ok: false, refusal: { reason: "sign-in-required" } });
+  });
+});

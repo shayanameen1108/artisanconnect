@@ -232,6 +232,55 @@
       "when": 1791476032997,
       "tag": "0032_hire-again",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1791479114885,
+      "tag": "0033_signals",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1791481027919,
+      "tag": "0034_account-self-service",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1791537499547,
+      "tag": "0035_figures",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1791810513886,
+      "tag": "0036_identity-numbers-held",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1791810878246,
+      "tag": "0037_review-window-pauses",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1791917259011,
+      "tag": "0038_domain-guards-the-moves",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1792001275021,
+      "tag": "0039_notices-seen",
+      "breakpoints": true
     }
   ]
 }

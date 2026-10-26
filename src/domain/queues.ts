@@ -6,7 +6,7 @@ import type { Context, Write } from "./context";
 import { causedBy } from "./errors";
 import { insertWhile } from "./guarded";
 import { adminOnly, ok, refuse, type Result } from "./result";
-import { QUEUE_NAMES, type QueueName } from "./queue-names";
+import { QUEUE_NAMES, splitOf, type QueueName } from "./queue-names";
 import { admins, queueItems } from "./schema";
 import { emailTells } from "./tells";
 
@@ -20,6 +20,8 @@ import { emailTells } from "./tells";
 export type Block =
   | { kind: "text"; text: string }
   | { kind: "facts"; facts: { label: string; value: string }[] }
+  /** A page of the Admin's own, such as an Account's on the People page. */
+  | { kind: "link"; label: string; href: string }
   /** Stored files, each by a link that works for a while; only a logged read hands them out. */
   | {
       kind: "files";
@@ -37,7 +39,7 @@ export type DecisionOption = {
 };
 
 /** A decision allowed on an item now, by its key, with the values it is recorded with. */
-export type AllowedDecision = DecisionOption & { key: string; fields: DecisionField[] };
+type AllowedDecision = DecisionOption & { key: string; fields: DecisionField[] };
 
 /**
  * A value the Admin records with a decision, such as an Identity Number read
@@ -49,11 +51,11 @@ export type DecisionField = {
   /** What it holds before the Admin changes it: what the sender gave. */
   value: string;
   /**
-   * A text, a day (YYYY-MM-DD), or a split of an amount between Release and
-   * Refund: the cents released, from 0 to the whole, sent back with the whole
-   * under `splitOf(key)`.
+   * A text, a day (YYYY-MM-DD), one of its `options`, or a split of an amount
+   * between Release and Refund: the cents released, from 0 to the whole, sent
+   * back with the whole under `splitOf(key)`.
    */
-  type: "text" | "day" | "split";
+  type: "text" | "day" | "choice" | "split";
   required: boolean;
   /** For a choice, the values allowed and how each is shown. */
   options?: { value: string; label: string }[];
@@ -65,11 +67,6 @@ export type DecisionField = {
 };
 
 export type RowDecision = AllowedDecision;
-
-/** The key a split's whole, as the Admin saw it, is sent back under, beside the split's own. */
-export function splitOf(key: string) {
-  return `${key}.of`;
-}
 
 /**
  * One row of an item whose rows are decided one at a time, such as each
@@ -161,7 +158,7 @@ type QueueItemKindDefinition = {
     admin: AdminActor,
     item: QueueItem,
     choice: { decision: string; reason: string | null; fields: Record<string, string> },
-  ): Promise<Result<Write[] | { writes: Write[]; afterCommit(): Promise<void> }>>;
+  ): Promise<Result<Write[] | { writes: Write[]; afterCommit: () => Promise<void> }>>;
   /**
    * The refusal for a batch a trigger aborted, such as one taking money a
    * party's command took first; null for any other error.
@@ -415,6 +412,11 @@ export function createQueues(ctx: Context, kinds: Record<string, QueueItemKind>)
       const fields = input.fields ?? {};
       const missing = option.fields.find((field) => field.required && !fields[field.key]?.trim());
       if (missing) return refuse("invalid", `Give the ${missing.label}.`);
+      const unoffered = option.fields.find(
+        (field) =>
+          field.options && !field.options.some((offered) => offered.value === fields[field.key]),
+      );
+      if (unoffered) return refuse("invalid", `Choose the ${unoffered.label} from those offered.`);
       // A split comes with the whole it split, as the Admin saw it, which must still be the whole.
       const moved = option.fields.find(
         (field) =>

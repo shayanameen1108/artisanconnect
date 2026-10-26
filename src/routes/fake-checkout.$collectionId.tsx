@@ -4,17 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Page } from "@/components/page";
 import { formatRands } from "@/domain/money";
-import { copy } from "@/web/copy";
+import { copy, pageTitle } from "@/web/copy";
 import { completeFakeCheckout, getFakeCheckout } from "@/web/fake-checkout";
 
 const t = copy.fakeCheckout;
 
 /**
- * The fake payment adapter's checkout, in local and staging (#126): where
+ * The fake payment adapter's checkout, in every environment (#111): where
  * the Client is sent to pay, standing in for the provider's page.
  */
 export const Route = createFileRoute("/fake-checkout/$collectionId")({
   loader: ({ params }) => getFakeCheckout({ data: { collectionId: params.collectionId } }),
+  head: () => ({ meta: [{ title: pageTitle(copy.fakeCheckout.title) }] }),
   component: FakeCheckout,
 });
 

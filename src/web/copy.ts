@@ -2,9 +2,10 @@ import { EMAIL_CODE } from "@/domain/accounts/inputs";
 import type { MessageEvent } from "@/domain/conversations/inputs";
 import type { ENGAGEMENT_STATES, NOT_HIRED_REASONS } from "@/domain/schema";
 import { formatTime } from "@/domain/sa-days";
+import type { ServiceCategory } from "@/domain/service-categories";
 
-// Every word the web app shows, in one place for later translation. Copy is a
-// placeholder until final copy is written (#111).
+// Every word the web app shows, in one place for later translation, in the
+// glossary's words (GLOSSARY.md).
 
 export const copy = {
   appName: "ArtisanConnect",
@@ -16,11 +17,82 @@ export const copy = {
       queues: "Queues",
       people: "People",
       payouts: "Payouts",
+      figures: "Figures",
+      suburbs: "Suburbs",
+      rules: "Rules",
       admins: "Admins",
       audit: "Audit log",
       signOut: "Sign out",
+      nav: "Admin",
+      toggle: "Show or hide the menu",
     },
     notices: "Notices",
+    noticesUnread: (count: string) => `Notices, ${count} unread`,
+    accountOf: (initials: string) => `Account, ${initials}`,
+    main: "Main",
+    menu: "Menu",
+    theme: { label: "Theme", light: "Light", dark: "Dark", system: "As the device" },
+    trades: "Trades",
+  },
+  search: {
+    label: "Find Artisans by trade or job",
+    placeholder: "What needs doing? Try “geyser” or “tiles”",
+    none: "No trade matches that. Choose one of the eight trades.",
+    trades: "Trades",
+    jobs: "Popular jobs",
+    in: (trade: string) => `in ${trade}`,
+  },
+  /** Jobs people search for, each with the trade that does it. */
+  popularJobs: [
+    { label: "Geyser repair or replacement", category: "plumbing" },
+    { label: "Burst pipe or leak", category: "plumbing" },
+    { label: "Blocked drain", category: "plumbing" },
+    { label: "Gas installation", category: "plumbing" },
+    { label: "Trip switch or distribution board", category: "electrical" },
+    { label: "Electrical certificate of compliance", category: "electrical" },
+    { label: "Lights and plug points", category: "electrical" },
+    { label: "Kitchen cupboards", category: "carpentry" },
+    { label: "Built-in cupboards", category: "carpentry" },
+    { label: "Interior painting", category: "painting" },
+    { label: "Exterior and wall painting", category: "painting" },
+    { label: "Bathroom tiling", category: "tiling" },
+    { label: "Floor tiling", category: "tiling" },
+    { label: "Boundary wall", category: "brickwork" },
+    { label: "Plaster cracks and damp", category: "brickwork" },
+    { label: "Roof leak", category: "roofing" },
+    { label: "Gutters and flashing", category: "roofing" },
+    { label: "Burglar bars", category: "welding" },
+    { label: "Gates and palisade fencing", category: "welding" },
+  ] satisfies { label: string; category: ServiceCategory }[],
+  footer: {
+    tagline: "Verified Artisans in Cape Town, paid through the platform.",
+    trades: "Find Artisans by trade",
+    regions: "Find Artisans by Region",
+    company: "ArtisanConnect",
+    findArtisans: "Find Artisans",
+    rules: "Marketplace rules",
+    support: "Support",
+    signUp: "Sign up",
+    photos: "Trade photos by Unsplash photographers, each credited",
+  },
+  loading: "Loading",
+  pickDay: "Pick a day",
+  rand: "R",
+  files: {
+    photos: "Choose photos",
+    files: "Choose files",
+    more: "Add more",
+    remove: (name: string) => `Take out ${name}`,
+  },
+  nextStepBack: "Go to it",
+  /** Before an act that cannot be undone. */
+  ask: { title: "Are you sure?", yes: "Confirm", no: "Go back" },
+  skipToContent: "Skip to content",
+  error: {
+    title: "This page did not load",
+    lead: "Something went wrong on our side, or the connection dropped. Nothing you did was lost; try again.",
+    retry: "Try again",
+    home: "Go to ArtisanConnect",
   },
   notFound: {
     title: "No such page",
@@ -29,53 +101,88 @@ export const copy = {
   },
   landing: {
     title: "Hire a verified Artisan in Cape Town",
-    lead: "Post a Job, compare fixed-price Quotes, and pay through the platform. The money waits with the platform until the work is done.",
-    postJob: "Post a Job",
-    findArtisans: "Find Artisans",
-    signIn: "I have an Account",
+    lead: "Compare fixed-price Quotes from Artisans the Admin has checked. You pay through ArtisanConnect, which holds the money until the work is done.",
+    searchLabel: "Find Artisans by trade and suburb",
+    trade: "Trade",
+    chooseTrade: "Choose a trade",
+    suburb: "Your suburb",
+    search: "Find Artisans",
+    searchHint: "Choose a trade first, then search.",
+    postJob: "Or post a Job and let Artisans come to you",
+    popular: "Popular jobs",
+    checksLabel: "What is checked",
+    checks: [
+      "Every Artisan's identity document checked by the Admin",
+      "Plumbers' and electricians' registrations checked",
+      "Paid through ArtisanConnect, released after the work",
+    ],
+    tradesTitle: "Browse by trade",
+    tradePhoto: (trade: string) => `${trade} work`,
     howTitle: "How a Job goes",
+    step: (n: number) => `Step ${n}`,
     how: [
       {
         title: "Post a Job",
-        text: "Describe the work, pick your suburb, and add photos. Your street stays private until you hire.",
+        text: "Describe the work, choose your suburb, and add photos. Your street stays private until you Hire.",
       },
       {
         title: "Compare Quotes",
-        text: "Up to five verified Artisans send a fixed price: Labour, Materials, start date, and any Warranty they offer.",
+        text: "Up to five verified Artisans each send one fixed price: Labour, Materials, start date, and any Warranty.",
       },
       {
         title: "Hire by paying",
-        text: "You pay the Quote through the platform, which holds it. Nobody is paid in cash or off the platform.",
+        text: "You pay the Quote and the 5% Protection Fee through ArtisanConnect, which holds the money. Nobody is paid in cash.",
       },
       {
         title: "Approve the work",
-        text: "The Materials go to the Artisan when work starts on site; the Labour once you approve the work.",
+        text: "The Materials go to the Artisan when work starts on site. The Labour goes at Approval: when you approve the work, or seven days after it is marked complete if you ask for nothing.",
       },
     ],
-    tradesTitle: "Eight trades",
-    tradesLead: "Browse the Artisans verified for each one, by Region.",
-    feesTitle: "Fees shown before you pay",
-    fees: "A Quote is the Artisan's fixed price. When you hire, you see the 5% Protection Fee on top before you pay, and nothing is added after.",
-    badgeTitle: "A badge is a check, not a guarantee",
-    badge:
-      "Each Verification Badge is a document the Admin checked, such as an identity document or a trade registration. It is not a promise that the work will be good: read the Reviews too.",
+    trustTitle: "What you can count on",
+    trust: [
+      {
+        title: "A badge is a check, not a guarantee",
+        text: "Each Verification Badge is a document the Admin checked, such as an identity document or a trade registration. It does not promise good work, so read the Reviews too.",
+      },
+      {
+        title: "Fees are shown before you pay",
+        text: "A Quote is the Artisan's fixed price. At Hire you see the 5% Protection Fee on top before paying, and nothing is added after.",
+      },
+      {
+        title: "Money is released after the work",
+        text: "ArtisanConnect holds your Payment. The Labour goes to the Artisan only at Approval, after the work is marked complete; if you dispute it, the Admin decides.",
+      },
+    ],
   },
   browse: {
     title: "Find Artisans",
-    lead: "Verified Artisans, one trade at a time. Those Available for Jobs come first, then by Review average, then by how many Reviews, then by name. Nobody pays to be higher.",
-    chooseTrade: "Choose a trade",
+    titleFor: (trade: string) => `${trade} Artisans`,
+    lead: "Verified Artisans, one trade at a time. Nobody pays to be listed higher.",
+    chooseTrade: "Choose a trade to see the Artisans verified for it.",
     trade: "Trade",
+    anyTrade: "Choose a trade",
     region: "Region",
     allRegions: "All Regions",
+    filters: "Filters",
+    clear: "Clear filters",
+    availableOnly: "Available for Jobs only",
+    orderLead:
+      "Those Available for Jobs come first, then by Review average, then by how many Reviews, then by name.",
     count: (count: number) => (count === 1 ? "1 Artisan" : `${count} Artisans`),
+    showing: (from: number, to: number, count: number) => `${from}–${to} of ${count} Artisans`,
     empty: "No Artisan is verified for this trade here yet.",
+    emptyFiltered: "No Artisan matches these filters. Try all Regions, or clear the filters.",
     available: "Available for Jobs",
     notAvailable: "Not taking Job Matches now",
     gasWork: "Gas work too",
     noRegions: "No Regions chosen yet",
-    open: "Open Profile",
+    noPhoto: "No work photo yet",
+    morebadges: (count: number) => `+${count} more`,
     signUpPrompt: "To post a Job or invite an Artisan to Quote, sign up as a Client.",
     signUp: "Sign up",
+    previous: "Previous",
+    next: "Next",
+    pages: "Pages",
   },
   profile: {
     about: "About",
@@ -96,14 +203,33 @@ export const copy = {
     rating: (average: number, count: number) =>
       `${average.toFixed(1)} out of 5, from ${count} ${count === 1 ? "Review" : "Reviews"}`,
     noRating: "No Reviews yet",
+    reviewCount: (count: number) => (count === 1 ? "(1 Review)" : `(${count} Reviews)`),
+    stars: (rating: number) => (rating === 1 ? "1 star" : `${rating} stars`),
+    ratingShare: (rating: number, count: number, of: number) =>
+      `${rating} out of 5: ${count} of ${of} ${of === 1 ? "Review" : "Reviews"}`,
     notVerifiedNow: "Not verified for any trade right now, so cannot Quote.",
     reviews: "Reviews",
     noReviews: "No Reviews yet. A Client reviews an Artisan once a Job is Completed.",
     noContact:
       "Work is arranged on ArtisanConnect, so a Profile shows no phone number, email, or address.",
-    inviteTitle: (name: string) => `Want ${name} to Quote?`,
     inviteLead:
       "Sign up as a Client to post a Job and invite Artisans to Quote. You hire by paying through the platform.",
+    invite: "Invite to a Job",
+    inviteDialog: (name: string) => `Invite ${name} to Quote`,
+    inviteDialogLead:
+      "Choose one of your Open Jobs. The Artisan is told and may Quote or pass; up to five Artisans Quote on a Job.",
+    job: "Job",
+    chooseJob: "Choose a Job",
+    sendInvitation: "Send the Invitation",
+    invited: (name: string) => `${name} is invited.`,
+    noOpenJob: (name: string, trades: string) =>
+      `You have no Open Job in ${trades}, the trades ${name} is verified for. Post one first.`,
+    postJob: "Post a Job",
+    cancel: "Cancel",
+    gallery: "Work photos",
+    previous: "Previous photo",
+    next: "Next photo",
+    verifiedFor: "Verified for",
     signUp: "Sign up",
     signIn: "Sign in",
     share: "Copy the link to this Profile",
@@ -184,6 +310,7 @@ export const copy = {
     resent: "A new code is on its way. The old one no longer works.",
   },
   signIn: {
+    label: "Welcome back",
     title: "Sign in",
     email: "Email",
     password: "Password",
@@ -208,6 +335,18 @@ export const copy = {
     done: "Your password is set. Every other session has been signed out.",
     signIn: "Sign in",
   },
+  reopen: {
+    title: "Reopen your Account",
+    lead: "We send a code to your Email if it holds a Closed Account.",
+    email: "Email",
+    send: "Send a code",
+    sent: (email: string) =>
+      `If ${email} holds a Closed Account, a code is on its way. It works once, for ${EMAIL_CODE.minutes} minutes.`,
+    code: "Email code",
+    submit: "Reopen my Account",
+    acceptAndReopen: "Accept and reopen",
+    link: "Closed your Account? Reopen it",
+  },
   rules: {
     title: "Marketplace rules",
     version: (version: number, published: string) => `Version ${version}, published ${published}`,
@@ -215,6 +354,7 @@ export const copy = {
       "The full rules are being written. They will say how a Job, a Quote, a Hire, and the money work, what may be said, and how your personal data is used.",
   },
   notices: {
+    new: "New",
     title: "Notices",
     empty: "Nothing yet. We tell you here, and by email, when something needs you.",
     open: "Open",
@@ -227,6 +367,10 @@ export const copy = {
       "Describe the work, pick your suburb, and add photos. Verified Artisans near you send fixed-price Quotes.",
     another: "Post a Job",
     anotherLead: "Describe the work, pick your suburb, and add photos.",
+    needYou: (count: number) => (count === 1 ? "A Job needs you" : `${count} Jobs need you`),
+    needYouLead: (title: string) =>
+      `First: ${title}. Quotes to compare, or work to approve, wait on you.`,
+    openJob: "Open it",
     post: "Post a Job",
     groups: {
       needsYou: "Needs you",
@@ -244,7 +388,6 @@ export const copy = {
       hired: "Hired",
     },
     expires: (when: string) => `Expires ${when}`,
-    open: "View",
   },
   job: {
     breadcrumb: "Jobs",
@@ -260,7 +403,6 @@ export const copy = {
     siteTypes: { home: "Home", business: "Business" },
     suburb: "Suburb",
     suburbHint: "Search the City's official suburbs. Artisans see only the Region.",
-    suburbChange: "Change",
     noSuburb: "No suburb matches. Only a site inside the City of Cape Town can be placed.",
     region: "Region",
     street: "Street address",
@@ -321,7 +463,6 @@ export const copy = {
     editRefused: (reason: string) => `Your last edit was refused: ${reason}`,
     outOfView: (reason: string) =>
       `The Admin took this Job out of view until you fix it: ${reason} Edit it; Artisans see it again once the Admin accepts the edit.`,
-    details: "Job details",
     none: "None given",
   },
   invite: {
@@ -340,6 +481,7 @@ export const copy = {
     emptyHireAgain: (name: string) => `${name} cannot be invited to this Job now.`,
   },
   verification: {
+    startWith: (check: string) => `Start with: ${check}`,
     title: "Verification",
     nextStep: "Next step",
     lead: "Before you can Quote, the Admin verifies who you are, your Payout account, and each trade you work in. A badge is a check the Admin accepted, not a promise about the work.",
@@ -403,7 +545,16 @@ export const copy = {
     photosOrPdf: "Photos or PDFs, up to 10 MB each",
   },
   home: {
+    title: "Home",
     waiting: "Waiting on you",
+    more: {
+      hired: "Hired work",
+      verification: "Verification",
+      regions: "your Regions",
+      jobs: "Job Matches and Invitations",
+    },
+    moreWaiting: (items: string[]) =>
+      `Also waiting: ${items.join(", ")}. Each comes up here in turn.`,
     verification: "Get verified to start quoting",
     open: "Open Verification",
     verificationLead: "You are offered Jobs only in the Service Categories you are verified for.",
@@ -411,8 +562,6 @@ export const copy = {
     chooseRegionsLead: "You are offered Jobs only in the Regions you choose.",
     matchesLead: "Quote on a Job Match, or pass. Nobody is told you passed.",
     seeMatches: "See Job Matches",
-    invitationsWaiting: (count: number) =>
-      count === 1 ? "An Invitation is waiting" : `${count} Invitations are waiting`,
     jobsWaiting: (invitations: number, matches: number) =>
       [
         invitations === 1 ? "1 Invitation" : invitations > 1 ? `${invitations} Invitations` : "",
@@ -422,6 +571,10 @@ export const copy = {
         .join(" and ") + (invitations + matches === 1 ? " is waiting" : " are waiting"),
     invitationsLead: "A Client chose you and asked you to Quote. You may pass; nobody is told.",
     seeInvitations: "See Invitations",
+    hiredWaiting: (count: number) =>
+      count === 1 ? "A Hired Job is waiting" : `${count} Hired Jobs are waiting`,
+    hiredLead: "Start the work, mark it complete, or put right what the Client asked.",
+    seeActive: "See Active Jobs",
     nothingWaiting: "Nothing is waiting on you",
     nothingWaitingLead: "New Job Matches and Invitations show here.",
     tabs: {
@@ -517,6 +670,8 @@ export const copy = {
     warrantyHint: "Your own promise. The platform does not make or enforce it.",
     total: "Total",
     minimum: "A Quote totals at least R300.",
+    feeLead:
+      "You are paid in the daily Payout run after each Release: the Materials at Work started, the Labour at Approval, less the Artisan Fee of 10%, or 5% once you have a Completed Job with this Client.",
     includesVat: (vatNumber: string) => `Amounts include VAT (VAT number ${vatNumber}).`,
     noVat: "Not VAT-registered? Your amounts are as given. You can add a VAT number in Account.",
     send: "Send Quote",
@@ -568,16 +723,27 @@ export const copy = {
     title: (count: number) => (count === 1 ? "1 Quote" : `${count} Quotes`),
     none: "No Quotes yet. We tell you when one arrives.",
     lead: "In the order they were sent. Nothing here is ranked.",
+    sortLabel: "Order",
+    compare: "Quotes side by side",
+    artisan: "Artisan",
+    record: "Record",
+    badges: "Verification Badges",
+    noBadges: "None shown",
+    scope: "Scope",
+    expiresRow: "Open until",
+    quoteTotal: "Quote total",
+    protectionFee: (percent: number) => `Protection Fee (${percent}%)`,
+    youPay: "You pay",
+    actions: "Actions",
+    more: "More",
+    checkout: "Checkout",
     sortSent: "Order sent",
     sortTotal: "Total, lowest first",
     noName: "Name being checked",
     payment: "You would pay",
-    paymentLead: (percent: number, fee: string) =>
-      `Includes the ${percent}% Protection Fee of ${fee}, which is not refunded.`,
     decline: "Decline",
     declineConfirm: "Decline this Quote? The Artisan is told.",
     details: "Details",
-    hideDetails: "Hide details",
     ended: "No longer open",
     sent: (when: string) => `Sent ${when}`,
     expires: (when: string) => `Expires ${when}`,
@@ -586,7 +752,6 @@ export const copy = {
     startPassedLead:
       "Ask the Artisan to revise this Quote in your Conversation; then you can Hire it.",
     hireTitle: "Hire by paying for this Quote",
-    hireQuote: "Quote",
     hireFee: (percent: number) => `Protection Fee (${percent}%)`,
     hirePayment: "You pay",
     hireAcknowledge: (fee: string) =>
@@ -726,7 +891,7 @@ export const copy = {
       `The law requires a ${name} on ${neededOn}. A PDF or a photo of it, showing your registration number.`,
     documents: "Other documents (optional)",
     documentsHint: (max: number) =>
-      `PDFs or photos, such as a guarantee or a data sheet. Up to ${max} documents in all.`,
+      `PDFs or photos, such as a manual or a data sheet. Up to ${max} documents in all.`,
     markCompleteConfirm:
       "Mark the work complete? The Client then has seven days to approve it or ask for a fix.",
     completionBeingChecked: "Your Completion is being checked",
@@ -822,6 +987,9 @@ export const copy = {
     artisanFee: "Artisan Fee",
     artisanFeeShown: (percent: number) => `${percent}% of each Release`,
     hiredQuote: "Hired Quote",
+    protectedUntil: "Protected Relationship Period ends",
+    protectedLead:
+      "Until then, all work between you two belongs on ArtisanConnect: arranging any off it is Leaving. It counts from your first Payment together and never renews.",
     address: "Address",
     chargeback: {
       frozenTitle: "Frozen by a Chargeback",
@@ -951,6 +1119,7 @@ export const copy = {
     tabs: {
       overview: "Overview",
       messages: (unread: number) => (unread > 0 ? `Messages (${unread})` : "Messages"),
+      details: "Job details",
     },
     none: "No Conversations yet. One opens with an Invitation or the first Quote.",
     noneArtisan: "No Conversation yet. One opens when you are invited or your Quote is Sent.",
@@ -1016,7 +1185,9 @@ export const copy = {
     client: "Client",
     noName: "A Client",
     reviews: (average: number | null, count: number) =>
-      average === null ? "No Reviews yet" : `${average.toFixed(1)} from ${count} Reviews`,
+      average === null
+        ? "No Reviews yet"
+        : `${average.toFixed(1)} from ${count} ${count === 1 ? "Review" : "Reviews"}`,
     completed: (count: number) => `${count} Completed`,
     region: "Region",
     gasWork: "Installs or removes gas",
@@ -1025,8 +1196,7 @@ export const copy = {
     title: "Regions",
     lead: "Choose one to three Regions you work in. You are offered Jobs only in these. Open a Region to see its suburbs.",
     suburbs: (count: number) => `${count} suburbs`,
-    open: (region: string) => `Show the suburbs of ${region}`,
-    close: (region: string) => `Hide the suburbs of ${region}`,
+    inRegion: (region: string) => ` in ${region}`,
     chosen: (count: number, max: number) => `${count} of ${max} chosen`,
     save: "Save Regions",
     saved: "Your Regions are saved.",
@@ -1036,6 +1206,12 @@ export const copy = {
     noMatch: "No official suburb matches that.",
   },
   account: {
+    groups: {
+      you: "You",
+      money: "Money",
+      rules: "Rules and help",
+      data: "Your data",
+    },
     title: "Account",
     name: "Name",
     tradingName: "Trading name",
@@ -1058,6 +1234,56 @@ export const copy = {
       cancel: "Cancel",
       saved: "Saved. Quotes you send or revise from now on carry it.",
       placeholder: "4123456789",
+    },
+    emailChange: {
+      change: "Change Email",
+      lead: "Give your password, and we send a code to the new Email. Until you enter it, your Email stays as it is and still signs in.",
+      newEmail: "New Email",
+      password: "Your password",
+      send: "Send a code",
+      sent: (email: string) =>
+        `A code is on its way to ${email}. It works once, for ${EMAIL_CODE.minutes} minutes.`,
+      code: "Email code",
+      submit: "Change my Email",
+      cancel: "Cancel",
+      done: "Your Email is changed. We told your old Email.",
+    },
+    payoutAccount: {
+      label: "Payout account",
+      ending: (bank: string, ending: string) => `${bank}, ending ${ending}`,
+      none: "None yet",
+      change: "Change it in Verification",
+    },
+    identityNumber: {
+      label: "Identity Number",
+      none: "None yet",
+      lead: "Read from your identity document. It stays yours if you close your Account.",
+    },
+    data: {
+      label: "Request my data",
+      lead: "Ask for a copy of your data, or for your Account to be erased. The Admin answers by email.",
+      copy: "Ask for a copy",
+      erasure: "Ask for erasure",
+      confirmErasure:
+        "Asking for erasure closes your Account now, as closing does, and signs you out. Once any money still owed to you is paid, the Admin erases your names, Email, and password; your money records stay, and your Reviews stay without your name. Ask for erasure?",
+      kinds: { copy: "A copy of your data", erasure: "Erasure" },
+      states: {
+        waiting: "Waiting for the Admin",
+        sent: "Sent",
+        erased: "Erased",
+        refused: "Refused",
+        withdrawn: "Withdrawn as you reopened",
+      },
+      asked: (when: string) => `Asked ${when}`,
+      download: "Download",
+      refused: (reason: string) => `Refused: ${reason}`,
+    },
+    close: {
+      label: "Close Account",
+      lead: "Closing ends your Open Jobs, declining their Quotes, and withdraws your Sent Quotes; everyone affected is told. Your Reviews stay, and money owed to you is still paid. You can reopen it later with your Email and a code.",
+      submit: "Close my Account",
+      confirm:
+        "Close your Account? Your Open Jobs close and your Sent Quotes are withdrawn, and you are signed out.",
     },
     names: {
       beingChecked: "Being checked",
@@ -1177,6 +1403,11 @@ export const copy = {
       emptyQueue: "Nothing is waiting in this queue.",
       raised: (when: string) => `Raised ${when}`,
       open: "Open",
+      table: "Waiting items",
+      queue: "Queue",
+      itemTitle: "Item",
+      raisedAt: "Raised",
+      filter: "Show one queue",
     },
     item: {
       queues: "Queues",
@@ -1231,6 +1462,11 @@ export const copy = {
       held: "Held",
       hold: "Hold Payouts",
       lift: "Lift the hold",
+      table: "Artisans owed or held",
+      artisan: "Artisan",
+      standing: "Payouts",
+      flowing: "Sent in the daily run",
+      act: "Act",
       history: "Money history",
     },
     people: {
@@ -1238,8 +1474,14 @@ export const copy = {
       lead: "Find a Client or an Artisan by name or Email, and act on them: warn, suspend, or lift a Suspension; hold or free an Artisan's Payouts. Each is told to the Account and written to the audit log.",
       search: "Name or Email",
       find: "Find",
-      empty: "Nobody matches.",
+      empty: "Nobody matches. Try part of the name, or the whole Email.",
+      table: "People found",
+      name: "Name",
+      kind: "Kind",
+      email: "Email",
+      standing: "Standing",
       suspended: "Suspended",
+      closed: { closed: "Closed", erased: "Erased" },
       payoutsHeld: "Payouts held",
       signedUp: (when: string) => `Signed up ${when}`,
       act: "Act on this Account",
@@ -1309,20 +1551,143 @@ export const copy = {
       empty: "Nothing has been logged yet.",
       system: "ArtisanConnect",
       older: "Older",
+      table: "Audit log entries",
+      at: "When",
+      who: "Who",
+      what: "What",
+    },
+    figures: {
+      title: "Figures",
+      lead: "How the marketplace is doing, with no targets. Jobs and Hires count by when they were posted and Hired, with what has become of them since; money, Leaving, and refused sends by when they happened.",
+      periods: {
+        "7d": "7 days",
+        "30d": "30 days",
+        "90d": "90 days",
+        "365d": "365 days",
+        all: "All time",
+      },
+      since: (date: string) => `Since ${date}`,
+      allTime: "Since the start",
+      jobs: "Jobs",
+      hires: "Hires",
+      outcomes: "Where the Hires stand",
+      outcomesLead: "Each Hire of the period, by how it ended, or that it has not.",
+      outcome: {
+        completed: "Completed",
+        byClient: "Cancelled by the Client",
+        byArtisan: "Cancelled by the Artisan",
+        inProgress: "Not ended yet",
+      },
+      count: "Hires",
+      money: "Money",
+      trust: "Leaving and the Content check",
+      jobsPosted: "Jobs posted",
+      jobsPostedNote:
+        "First opened in the period, at posting or the Admin's release. A Renew is not a new Job.",
+      jobsWithQuote: "Jobs with a Quote",
+      jobsWithQuoteNote: (count: number, of: number) =>
+        `${count} of the ${of} Jobs posted had a Quote Sent.`,
+      hiresCount: "Hires",
+      hiresNote: (inProgress: number) =>
+        inProgress === 1
+          ? "1 is not yet Completed or Cancelled."
+          : `${inProgress} are not yet Completed or Cancelled.`,
+      repeat: "Repeat Hire rate",
+      repeatNote: (count: number, of: number) =>
+        `${count} of ${of} Hires were in a Client Relationship that had a Completed Engagement, at the lower Artisan Fee.`,
+      completed: "Completed rate",
+      completedNote: (count: number, of: number) => `${count} of ${of} Hires are Completed.`,
+      cancellation: "Cancellation rate",
+      cancellationNote: (byClient: number, byArtisan: number, of: number) =>
+        `Of ${of} Hires, ${byClient} cancelled by the Client and ${byArtisan} by the Artisan. One a Chargeback decision ended is neither.`,
+      dispute: "Dispute rate",
+      disputeNote: (count: number, of: number) => `${count} of ${of} Hires had a Dispute.`,
+      paymentValue: "Payment value",
+      paymentValueNote: (refunded: string, chargedBack: string) =>
+        `Paid in for Hires and Updated Quotes, Protection Fees included. In the same days ${refunded} was refunded, and the bank sent back ${chargedBack} by Chargebacks.`,
+      protectionFees: "Protection Fees",
+      protectionFeesNote: "5% of each Payment, never refunded.",
+      artisanFees: "Artisan Fees",
+      artisanFeesNote: "Kept from each Release, Materials and Labour alike, never refunded.",
+      leavingWarnings: "Leaving warnings",
+      leavingWarningsNote: (suspensions: number) =>
+        suspensions === 1
+          ? "And 1 Suspension for Leaving."
+          : `And ${suspensions} Suspensions for Leaving.`,
+      refusedSends: "Refused sends",
+      refusedSendsNote:
+        "Sends on a Job the Content check refused as a sure hit, a discarded Draft's included. Names, Profile edits, and Report notes are not counted.",
+    },
+    suburbs: {
+      title: "Suburbs",
+      lead: "The City's official suburbs, each in one Region, which a Client picks to place a Job. Add one the City creates. A suburb is never moved, renamed, or removed, so check its name and Region first.",
+      add: "Add a suburb",
+      addLead: "Name it as the City publishes it. Nobody is told; Clients can pick it at once.",
+      name: "Name",
+      namePlaceholder: "NEW HORIZONS",
+      region: "Region",
+      chooseRegion: "Choose a Region",
+      submit: "Add the suburb",
+      anyway: "Add it anyway",
+      added: (name: string, region: string) => `${name} is added to ${region}.`,
+      count: (count: number) => (count === 1 ? "1 suburb" : `${count} suburbs`),
+      total: (count: number) => `${count} suburbs in all.`,
+      inRegion: (region: string) => ` in ${region}`,
+    },
+    rules: {
+      title: "Marketplace rules",
+      lead: "Every Account accepts the current version at sign-up, and again at its next sign-in after a change, with the version and time recorded.",
+      publish: (version: number) => `Publish version ${version}`,
+      publishLead:
+        "Say what changed. Every Account is told, and must accept the new version at its next sign-in.",
+      summary: "What changed",
+      confirmLead: (version: number) =>
+        `Publish version ${version}? Every Account is told at once, and nobody signs in again without accepting it. A version is never withdrawn.`,
+      confirm: "Publish",
+      cancel: "Cancel",
+      published: (version: number) => `Version ${version} is published.`,
+      versions: "Versions",
+      version: (version: number, published: string) => `Version ${version}, published ${published}`,
+      current: "Current",
+      acceptedCurrent: (count: number, of: number) =>
+        `${count} of ${of} Accounts have accepted it.`,
+      acceptedOlder: (count: number) =>
+        count === 1
+          ? "1 Account accepted this one last, and accepts the current version at its next sign-in."
+          : `${count} Accounts accepted this one last, and accept the current version at their next sign-in.`,
+      read: "Read the rules as Accounts see them",
     },
   },
-  notBuilt: "This page is not built yet.",
   devMail: { title: "Local mailbox", empty: "No email sent since the app started." },
-  notAPerson: "Complete the check above first.",
 } as const;
 
-/** A date as South Africans read it. */
+/** A page's title in the browser's tab: the page, then ArtisanConnect (WCAG 2.4.2). */
+export function pageTitle(page: string): string {
+  return `${page} · ${copy.appName}`;
+}
+
 /** A length of time as minutes and seconds: "4:05". */
-export function formatSeconds(seconds: number): string {
+function formatSeconds(seconds: number): string {
   const whole = Math.round(seconds);
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+/** A date as South Africans read it, to the minute: "06 Oct 2026, 08:00". */
 export function formatDate(date: Date | string): string {
   return formatTime(new Date(date));
+}
+
+/** How long until a deadline, in the largest whole unit: "in 3 days", "in 5 hours". */
+export function countdownTo(date: Date | string, now = Date.now()): string {
+  const minutes = Math.floor((new Date(date).getTime() - now) / 60_000);
+  if (minutes < 0) return "passed";
+  if (minutes < 60) return minutes <= 1 ? "in a minute" : `in ${minutes} minutes`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return hours === 1 ? "in 1 hour" : `in ${hours} hours`;
+  return `in ${Math.floor(hours / 24)} days`;
+}
+
+/** A deadline as a date and a countdown: "06 Oct 2026, 08:00 (in 3 days)". */
+export function formatDeadline(date: Date | string): string {
+  return `${formatDate(date)} (${countdownTo(date)})`;
 }
